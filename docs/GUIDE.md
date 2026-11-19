@@ -50,6 +50,25 @@ You can run the helpers again whenever you like: work already done is skipped. `
 
 ## 2. The web panel
 
+### Reviewing manual longitudinal interventions
+
+Open **Data › Speed and sign review › Interventions**. **Find interventions** reads the already scanned logs
+for accelerator or brake presses and driver cancellations while openpilot or cruise held the speed.
+It proposes clips; running it again keeps the decisions already made. For new drives use **Read the logs** on the Drives subtab first.
+
+Open a clip to see the road video starting 15 seconds before the intervention. The speed lane compares your dashboard,
+the recorded vision proposal and the cruise set speed; a missing value is shown as a dash. The proposal is what the
+comma displayed and need not have been the active controller. Use **From here** and **To here** on the player to select
+what should be learned, including an earlier approach or the recovery. **Use my speed** takes the dashboard speed only
+where the logs confirm driver control. **Correct with a block** sets your chosen km/h over the selected interval,
+including one where the machine drove. **Skip** excludes the event. Saving advances to the next pending event;
+**Next intervention** alone does not save. Select **Reviewed** to change or withdraw a decision.
+
+Only the selected intervals of accepted assisted-drive clips are eligible for the brain's next training. Context
+before them has no target; skipped clips contribute nothing. The frozen place split stays in force: a clip crossing
+training and held-out places is reported and left out. Dashcam drives keep their existing labels. **Find interventions**
+and saving a decision do not start training. Terminal equivalent for discovery: `nnslr interventions`.
+
 The site is in English and looks like `distill-web` and `perception-web` (dark; the **Account** icon at the top right opens the menu with the Dark / Light / Automatic look, the password and signing out). There are four sections in the top bar (on the phone, in a bar at the bottom, like an app): **Overview**; **Data**, with the pages **Drives** (`/prepare`), **Speed review** (`/speed-review`, the one review page: the signs are reviewed on its **Signs** side), **Sign distance** (`/sign-distance`) and **Training dataset** (`/dataset`); **Training** (`/train`); **Models**, with **Versions** (`/models`), **Drive** (`/drive`), **Results** (`/evaluate`) and **Publish** (`/publish`). The pages of a section are under its title. It is one single page that switches tabs without reloading:
 
 - **Overview** (`/`, the start page): at the top, the jobs running, one line each (percent, step, time left) with **Stop** beside it (a tap on the line opens the log), or the last job if it failed; then the loop of the work, four numbered cards in their order: **Drives** (the drives to prepare and who finds the signs, with **Prepare new drives**; with none, **Download** from the comma), **Sign review** (the frames left, in how many drives, the percent confirmed, with **Resume review**), **Train** (as Data › Training dataset says it: the Sign review frames not in the dataset yet, on how many drives, and the last import, with **Import sign reviews**; under it **Training pipeline**, which opens Training › Pipeline and stays while the import runs, [#43](https://github.com/cristianku/sunnypilot.smartspeed/issues/43); until 3 drives are reviewed, how many are) and **Car** (the networks in use that the comma's software does not have yet, with **Publish**, or **Finish publishing** while the build of psa-torque-sunny-testing is owed). Each title leads to its page; the first card with work waiting has a ring and the blue button; a job running for a card takes the place of its button (its **Stop** is in the list at the top); a card whose work is done has a tick. The cards are worked out from the data (drives, review, dataset, `models/active.json` and `models/on-car.json`), not from the sentence of `route_status`. At the bottom, the last three finished jobs (**Show all** for the others). The machine (GPU, CPU, RAM, disk), the processes on the GPU and **Update the site** are in the panel of the server pill at the top: the pill gives the use of each card (*GPU 3·87%*), the panel one row a card (*GPU 0 · 81:00.0*, *GPU 1 · C1:00.0*) with its use, memory, temperature and what holds it. The list of routes `/routes` (Data › Sign review) opens on a summary: the frames confirmed, by you and by the AI assistants, the AI's frames still to confirm, and one tile per group (In progress, To start, Done). A tile shows its list: one list at a time and always one, remembered in the browser, otherwise the first group that has drives.

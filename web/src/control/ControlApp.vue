@@ -26,7 +26,7 @@ import PublishTab from './PublishTab.vue';
 import SignDistanceTab from './SignDistanceTab.vue';
 import ReviewersTab from './ReviewersTab.vue';
 import SpeedReviewTab from './SpeedReviewTab.vue';
-import {currentTab, useTabRouting} from './tabs';
+import {currentTab, tabIntervention, useTabRouting} from './tabs';
 import TrainTab from './TrainTab.vue';
 import {RESUME_JOB, RETRY_ACTIONS, RETRY_JOB, usePanelActions} from './use-actions';
 
@@ -36,7 +36,7 @@ const LIGHT_TABS: ReadonlySet<string> = new Set(['speedreview', 'signdistance'])
 const STATUS_MS = 4000;
 const LIGHT_STATUS_MS = 60000;
 const hidden = ref(document.hidden);
-const light = computed(() => LIGHT_TABS.has(currentTab.value));
+const light = computed(() => LIGHT_TABS.has(currentTab.value) && tabIntervention.value !== 'queue');
 const {status, refresh} = usePanelStatus((value) => { recordMachine(value.system); aiLive.value = value.ai_live ?? null; },
   () => light.value || hidden.value ? LIGHT_STATUS_MS : STATUS_MS);
 // Back on a tab that shows the status, or on the browser tab: a fresh one now.
@@ -103,7 +103,8 @@ watch(busyPaths, markBusy);
               @pipeline="startPipeline" @stop-pipeline="stopPipeline"/>
     <EvaluateTab v-else-if="currentTab === 'evaluate'" :status="status" @run="run" @stop="stop" @details="details"/>
     <DatasetTab v-else-if="currentTab === 'dataset'" :status="status" @run="run" @stop="stop" @details="details"/>
-    <SpeedReviewTab v-else-if="currentTab === 'speedreview'" :read-only="status?.actions_enabled === false"/>
+    <SpeedReviewTab v-else-if="currentTab === 'speedreview'" :read-only="status?.actions_enabled === false"
+                    :status="status" @run="run" @stop="stop" @details="details"/>
     <DriveTab v-else-if="currentTab === 'drive'" :status="status" @run="run" @stop="stop" @details="details"/>
     <SignDistanceTab v-else-if="currentTab === 'signdistance'" :read-only="status ? !status.actions_enabled : null"/>
     <PublishTab v-else-if="currentTab === 'publish'" :status="status" @run="run" @stop="stop" @details="details"/>

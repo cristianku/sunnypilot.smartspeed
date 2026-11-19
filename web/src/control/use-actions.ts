@@ -14,7 +14,7 @@ export const RESUME_JOB: InjectionKey<(job: Job) => Promise<void>> = Symbol('res
 export const RETRY_JOB: InjectionKey<{can: (job: Job) => boolean; run: (job: Job) => void}> = Symbol('retry-job');
 /** The actions whose failed job can simply run again: no option but the proposer (a training has Resume). */
 export const RETRY_ACTIONS: ActionName[] = ['fetch', 'prepare', 'prepare_again', 'setup_vlm', 'dataset', 'measure_proposer',
-  'networks_prepare', 'road_types', 'mapillary_locations', 'mapillary_windows', 'networks_github_save',
+  'networks_prepare', 'road_types', 'interventions', 'mapillary_locations', 'mapillary_windows', 'networks_github_save',
   'networks_github_restore'];
 
 /** The question before an action; null: it starts at the click (preparing, importing the reviews, the road types). */
@@ -224,6 +224,7 @@ const STOP_TEXT: Partial<Record<ActionName, string>> = {
   networks_prepare: 'Nothing is kept: preparing again starts over.',
   networks_publish: 'What Hugging Face already received may stay there.',
   road_types: 'The drives done stay; the next run does them all again in a minute.',
+  interventions: 'The drives already indexed and your reviews stay. Find interventions can run again.',
   mapillary_locations: 'The photos already located stay: locating again carries on from there.',
   mapillary_windows: 'The windows already cut stay: cutting again carries on from there.',
   send_to_car: 'What was already published or pushed stays. Publishing again carries on: what is in place is skipped, '

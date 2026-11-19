@@ -3,7 +3,7 @@ import type {AiState} from './ai-types';
 
 export type ActionName = 'fetch' | 'fetch_connect' | 'prepare' | 'prepare_again' | 'measure_proposer' | 'setup_vlm' | 'dataset' | 'train' | 'train_continue' | 'train_resume' | 'train_classifier'
   | 'train_cutter' | 'train_decider' | 'train_brain' | 'regression' | 'update' | 'ai_review' | 'measure_ai_reviewer' | 'networks_prepare' | 'networks_publish'
-  | 'road_types' | 'send_to_car' | 'try_on_comma' | 'comma_restore' | 'mapillary_locations' | 'mapillary_windows'
+  | 'road_types' | 'interventions' | 'send_to_car' | 'try_on_comma' | 'comma_restore' | 'mapillary_locations' | 'mapillary_windows'
   | 'road_labeler_train' | 'road_labeler_predict' | 'box_fit_train' | 'simulate' | 'networks_github_save'
   | 'networks_github_restore' | 'brain_replay';
 /** What a cutter learns to find: every sign (the speed signs and the other signs) or the speed signs only. */
@@ -1907,6 +1907,8 @@ export interface BrainTraining {
   drives: number;
   hours: number;
   sunnypilot_on: number;
+  interventions?: number;
+  intervention_seconds?: number;
 }
 export interface TrainSettings {
   label: string;

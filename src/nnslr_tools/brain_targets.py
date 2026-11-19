@@ -10,9 +10,10 @@ The drives (training_routes): every dashcam drive with a finished scan (drive_re
 frames (derived/frames), always, each whole (his rule of 9 Nov 2026 evening: the switch "OK for brain training" of #9
 went again, since the signs the brain is given are the networks' anyway and get better as they learn). A dashcam drive
 (speed_review.dashcam_drive) is one where openpilot was passive in every carParams (sunnylink › Toggles › "Enable
-sunnypilot" off, or dashcamOnly) and never engaged: he drove alone, so his speed is his. Any other drive is left out
-whole, with its reason in dataset's log, and so is one whose logs show openpilot, MADS or controlsd on anyway
-(speed_review.engaged_series). A drive of another car downloaded from comma connect (connect_fetch) is taken the same
+sunnypilot" off, or dashcamOnly) and never engaged: he drove alone, so his speed is his. Assisted drives contribute
+only confirmed manual intervention intervals; the pre-roll gives context and no machine speed is a target.
+Without such a review they stay out, as do purported dashcam drives whose logs show openpilot, MADS or controlsd
+on anyway (speed_review.engaged_series). A drive of another car downloaded from comma connect (connect_fetch) is taken the same
 way, when it is a dashcam drive: its driver's speed is the answer (Cristian, 12 Nov 2026). The sign classifier learns
 from every drive. A drive is labelled by being driven: one
 without a block or a mark is a drive like the others.
@@ -38,7 +39,8 @@ each with its reason:
 - left_out: inside a block with no speed, a person took those moments out;
 - boundary: EDGE_SECONDS around the edge of a block where the answer jumps, since a tap is only so exact (a block with the
   dashboard's own speed at its edge is no jump, and the dashboard's speed changing from step to step is never one);
-- no_frame: no picture, or a frame the encode index lacks.
+- no_frame: no picture, or a frame the encode index lacks;
+- outside_review: context around a manual intervention, outside the interval the reviewer selected.
 
 The roadworks (works_answers), a target of 1 or 0 and a weight of 1 or 0, apart from the speed:
 
@@ -223,7 +225,7 @@ from pathlib import Path
 
 import numpy as np
 
-from nnslr_tools import drive_logs, drive_review
+from nnslr_tools import drive_logs, drive_review, interventions
 from nnslr_tools.drive_extract import GAP_SECONDS
 from nnslr_tools.gps import frame_country, load_positions
 from nnslr_tools.media import FRAME_SIZE
@@ -248,9 +250,9 @@ EDGE_SECONDS = 2
 EVENT_EDGE_SECONDS = 0.5
 SITE_MARGIN_S = 60
 READ_COMMAND = 'nnslr road-type-signs --labelled'
-NO_SPEED, STOPPED, BLOCKED_OUT, BOUNDARY, NO_FRAME, CRUISE, NO_TYPE = range(1, 8)
+NO_SPEED, STOPPED, BLOCKED_OUT, BOUNDARY, NO_FRAME, CRUISE, NO_TYPE, OUTSIDE_REVIEW = range(1, 9)
 OUT_REASONS = {NO_SPEED: 'no_speed', STOPPED: 'stopped', BLOCKED_OUT: 'left_out', BOUNDARY: 'boundary', NO_FRAME: 'no_frame',
-               CRUISE: 'cruise', NO_TYPE: 'no_road_type'}
+                CRUISE: 'cruise', NO_TYPE: 'no_road_type', OUTSIDE_REVIEW: 'outside_review'}
 NO_LABELS = {'blocks': [], 'works': [], 'checked_ns': None, 'road': [], 'road_checked': {}}
 HELD_OUT = ('test', 'validation')
 NIGHT_FROM, NIGHT_TO = 22, 6
@@ -426,26 +428,45 @@ def _dashcam_spans(root: Path, left_out: dict | None = None) -> dict[str, tuple[
     return found
 
 
+def _training_sources(root: Path, left_out: dict):
+    """Whole dashcam drives, and separately only confirmed intervals of assisted drives with frames."""
+    dashcam = _dashcam_spans(root, left_out)
+    reviews = {}
+    if db_path(root).is_file():
+        db = _connect_read_only(db_path(root))
+        try:
+            reviews = {route: clips for route, clips in interventions.approved(db).items()
+                       if route in left_out and any((Path(root) / FRAMES_RELATIVE / route).glob('*/frames.jsonl'))}
+        finally:
+            db.close()
+        for route in reviews:
+            del left_out[route]
+    return dashcam, reviews
+
+
 def training_routes(root: Path, left_out: dict | None = None) -> list[str]:
-    """The drives the brain learns from, in order, each whole: every dashcam drive with a finished scan and its frames
-    (_dashcam_spans). left_out, when given, gets SUNNYPILOT_ON for each scanned drive that is no dashcam drive, by
-    route."""
-    return sorted(_dashcam_spans(root, left_out))
+    dashcam, reviews = _training_sources(root, left_out if left_out is not None else {})
+    return sorted(dashcam.keys() | reviews.keys())
 
 
 def training_counts(root: Path) -> dict:
     """What the brain learns from today, from the scans alone (no dataset): {drives, hours: their length from the start
     of their logs to the end, sunnypilot_on: the scanned drives with sunnypilot on}."""
     left_out: dict[str, str] = {}
-    spans = _dashcam_spans(root, left_out)
+    spans, reviews = _training_sources(root, left_out)
+    clips = [clip for items in reviews.values() for clip in items]
     return {'drives': len(spans), 'hours': round(sum(end - start for start, end in spans.values()) / NS / 3600, 2),
-            'sunnypilot_on': sum(reason == SUNNYPILOT_ON for reason in left_out.values())}
+            'sunnypilot_on': sum(reason == SUNNYPILOT_ON for reason in left_out.values()),
+            **({'interventions': len(clips), 'intervention_drives': len(reviews),
+                'intervention_seconds': sum(clip['end_ns'] - clip['start_ns'] for clip in clips) / NS} if clips else {})}
 
 
 def training_counts_text(counts: dict) -> str:
     """training_counts for a log: the dashcam drives and their hours, the drives with sunnypilot on left out."""
     return (f"Dashcam drives: {counts['drives']}, {counts['hours']:.1f} h; {counts['sunnypilot_on']} "
-            f"drive{'' if counts['sunnypilot_on'] == 1 else 's'} with sunnypilot on, left out whole.")
+             f"drive{'' if counts['sunnypilot_on'] == 1 else 's'} with sunnypilot on, left out whole."
+             + (f" Reviewed interventions: {counts['interventions']} ({counts['intervention_seconds']:.0f} s)."
+                if counts.get('interventions') else ''))
 
 
 def speed_answers(ns: np.ndarray, driver_kph: list, blocks: list[dict],
@@ -1027,9 +1048,51 @@ def memory_cuts(ns: np.ndarray) -> set[int]:
     return {int(at) for at in known[1:][np.diff(ns[known]) > BRAIN_INPUTS.MEMORY_GAP_SECONDS * NS]}
 
 
+def intervention_answers(ns, merged, clips):
+    """Only the interval a person actually selected answers. Recheck ownership against the current logs."""
+    values = np.full(len(ns), -1, dtype=np.int64)
+    out = np.full(len(ns), OUTSIDE_REVIEW, dtype=np.int64)
+    speeds = np.array([-1 if v is None else v for v in driver_speed(merged, ns)], dtype=np.int64)
+    owners = interventions.ownership(merged)
+    human = np.array([owners.at(t) == 'driver' for t in ns], dtype=bool)
+    for clip in clips:
+        inside = (ns >= clip['start_ns']) & (ns < clip['end_ns'])
+        if clip['decision'] == 'block':
+            values[inside] = clip['kph']
+        else:
+            out[inside & ~human] = CRUISE
+            inside &= human
+            values[inside] = speeds[inside]
+        out[inside] = np.where(values[inside] < 0, NO_SPEED, np.where(values[inside] == 0, STOPPED, 0))
+    return speed_class(values), out
+
+
+def _clip_frames(frames, partitions, cells, clips, log):
+    """Keep the pre-roll as GRU context; never split a reviewed event between train and held-out places."""
+    times = np.array([-1 if f['ns'] is None else f['ns'] for f in frames], dtype=np.int64)
+    places = np.asarray(partitions)
+    keep = np.zeros(len(times), dtype=bool)
+    accepted = []
+    for clip in clips:
+        start = min(clip['start_ns'], clip['at_ns'] - interventions.PRE_ROLL_NS)
+        end = max(clip['end_ns'], clip['at_ns'] + 1)
+        context = (times >= max(0, start)) & (times < end)
+        if len(set(places[context]) - {'buffer'}) > 1:
+            log(f"{clip['event']}: intervention crosses frozen partitions, left out")
+            continue
+        if not ((times >= clip['start_ns']) & (times < clip['end_ns'])).any():
+            log(f"{clip['event']}: no frame in the reviewed interval, left out")
+            continue
+        accepted.append(clip)
+        keep |= context
+    indices = np.flatnonzero(keep)
+    cuts = set((np.flatnonzero(np.diff(indices) != 1) + 1).tolist())
+    return ([frames[i] for i in indices], [partitions[i] for i in indices], [cells[i] for i in indices], accepted, cuts)
+
+
 def drive_targets(root: Path, route: str, labels: dict, merged: dict, split: dict, *, rate: float = 1.0,
                   need_pictures: bool = True, inputs: bool = True, kinds: tuple[str, ...] = (), types: bool = False,
-                  models: Path | None = None, other_road_boxes: bool = False) -> dict:
+                  models: Path | None = None, other_road_boxes: bool = False, clips=None, log=print) -> dict:
     """A drive for the training at rate frames a second (1 or RATE_HZ): frames, ns, partitions, cells, cuts (memory_cuts),
     speed (class per frame), speed_out (why a frame is out of the loss, 0 when in), speed_weight, blocks (Speed review's),
     blocked (a block with a speed holds there), works, works_weight, road, road_weight (road_answers, a column for each of
@@ -1057,12 +1120,26 @@ def drive_targets(root: Path, route: str, labels: dict, merged: dict, split: dic
         frames, partitions, cells = brain_frames(root, frames, partitions, cells, merged, record)
     elif rate != 1.0:
         raise ValueError(f'the brain runs at 1 or {RATE_HZ:g} frames a second, not {rate}')
+    cuts = set()
+    if clips is not None:
+        frames, partitions, cells, clips, cuts = _clip_frames(frames, partitions, cells, clips, log)
+        if not frames:
+            raise FramesChanged(f'{route}: no reviewed intervention has frames in one frozen partition')
     ns = np.array([-1 if frame['ns'] is None else frame['ns'] for frame in frames], dtype=np.int64)
     usable = np.array([frame['ns'] is not None and (frame['present'] or not need_pictures) for frame in frames], dtype=bool)
-    blocks = labels['blocks']
-    speed, speed_out = speed_answers(ns, driver_speed(merged, ns), blocks, machine_held(merged, ns))
+    blocks = labels['blocks'] if clips is None else [c for c in clips if c['decision'] == 'block']
+
+    def answers(times):
+        if clips is not None:
+            return intervention_answers(times, merged, clips)
+        return speed_answers(times, driver_speed(merged, times), blocks, machine_held(merged, times))
+
+    speed, speed_out = answers(ns)
+    if clips is not None:
+        # Pre-roll feeds the recurrent state but no head learns a target from it.
+        usable &= speed_out != OUTSIDE_REVIEW
     pictured = (speed_out == 0) & np.array([frame['ns'] is not None and frame['present'] for frame in frames], dtype=bool)
-    speed_out[~usable] = NO_FRAME
+    speed_out[~usable & (speed_out != OUTSIDE_REVIEW)] = NO_FRAME
     speed[~usable] = -1
     blocked = np.zeros(len(ns), dtype=bool)
     for block in blocks:
@@ -1088,10 +1165,10 @@ def drive_targets(root: Path, route: str, labels: dict, merged: dict, split: dic
     taught = 0
     if span[0] is not None and span[1] is not None:
         grid = np.arange(int(span[0]), int(span[1]), int(NS / rate), dtype=np.int64)
-        taught = int((speed_answers(grid, driver_speed(merged, grid), blocks, machine_held(merged, grid))[1] == 0).sum())
+        taught = int((answers(grid)[1] == 0).sum())
     return {'route': route, 'rate': rate, 'frames': frames, 'ns': ns, 'partitions': partitions,
             'own_kph': np.array([np.nan if kph is None else kph for kph in own], dtype=np.float32),
-            'cells': cells, 'cuts': memory_cuts(ns), 'speed': speed, 'speed_out': speed_out,
+            'cells': cells, 'cuts': memory_cuts(ns) | cuts, 'speed': speed, 'speed_out': speed_out,
             'speed_weight': (speed_out == 0).astype(np.float32), 'blocks': blocks, 'blocked': blocked,
             'works': works, 'works_weight': works_weight, 'road': road, 'road_weight': road_weight, 'road_kinds': list(kinds),
             'road_type': road_type, 'type_weight': (typed & usable).astype(np.float32), 'typed_by_person': typed_by_person,
@@ -1140,7 +1217,7 @@ def dataset(root: Path, merged_of, routes: list[str] | None = None, log=_say, *,
     """Every drive of training_routes (or only routes), as drive_targets at rate with its labels (inputs and types as
     there), each with reader_current: read by the car's reader of today (networks: by the networks chosen for the
     brain, sign_networks.load's, their release; None: the car's release of the sunnypilot clone). merged_of(route): the drive's joined logs, None
-    before a scan. A drive that is no dashcam drive, one whose logs show openpilot driving (engaged_series) and one of the frozen split
+    before a scan. Assisted drives without reviewed clips, unexpectedly engaged dashcam drives, and frozen drives
     whose frames changed are left out with a line in log. Sites stay whole only across the drives asked for. Every drive
     has the kinds of road of today (road_kinds), in the same columns. other_road_boxes: sign_boxes with every sign read,
     those of another road too (drive_targets): for a brain that learns whose road a sign is of, and for one that learnt
@@ -1150,7 +1227,9 @@ def dataset(root: Path, merged_of, routes: list[str] | None = None, log=_say, *,
     models = networks['models'] if networks else None
     reader = fingerprint(package_path(), models=models)
     left_out: dict[str, str] = {}
-    labels, trainable = read_labels(root), training_routes(root, left_out)
+    labels = read_labels(root)
+    dashcam, reviews = _training_sources(root, left_out)
+    trainable = sorted(dashcam.keys() | reviews.keys())
     for route in sorted(set(labels) | set(routes or ()) | set(left_out)):
         if route not in trainable and (routes is None or route in routes):
             log(f"{route}: {left_out.get(route, 'no finished scan or no frames')}, left out")
@@ -1163,13 +1242,13 @@ def dataset(root: Path, merged_of, routes: list[str] | None = None, log=_say, *,
             log(f'{route}: no scan, left out')
             continue
         engaged = engaged_series(merged)
-        if engaged:
+        if engaged and route not in reviews:
             log(f"{route}: openpilot drove ({', '.join(engaged)} on), left out")
             continue
         try:
             drive = drive_targets(root, route, labels.get(route, NO_LABELS), merged, split, rate=rate,
                                   need_pictures=need_pictures, inputs=inputs, kinds=kinds, types=types, models=models,
-                                  other_road_boxes=other_road_boxes)
+                                  other_road_boxes=other_road_boxes, clips=reviews.get(route), log=log)
         except FramesChanged as error:
             log(f'{error}, left out')
             continue

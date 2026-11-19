@@ -46,6 +46,7 @@ const NO_CAR = 'Car unknown';
 // (brain_targets.training_routes): there is nothing to mark for it.
 import {computed, onBeforeUnmount, onMounted, ref, shallowRef, watch} from 'vue';
 import {api, messageOf} from '../common/api';
+import type {ActionName, ActionState, Job, PanelStatus} from '../common/panel-types';
 import {aiLive} from '../composables/ai-live';
 import {durationText} from './jobs';
 import {isGuest} from '../common/guest';
@@ -58,9 +59,16 @@ import ReadLogsCard from './ReadLogsCard.vue';
 import SectionHead from './SectionHead.vue';
 import Segmented from './Segmented.vue';
 import SpeedReviewDrive from './SpeedReviewDrive.vue';
-import {tabDrive} from './tabs';
+import InterventionReview from './InterventionReview.vue';
+import {goTo, tabDrive, tabIntervention} from './tabs';
 
-const props = defineProps<{readOnly: boolean}>();
+const props = defineProps<{readOnly: boolean; status: PanelStatus | null}>();
+const emit = defineEmits<{run: [name: ActionName, state: ActionState]; stop: [job: Job]; details: [job: Job]}>();
+const reviewTabs = [{key: 'drives', label: 'Drives'}, {key: 'queue', label: 'Interventions'}] as const;
+const section = computed({
+  get: () => tabIntervention.value ? 'queue' as const : 'drives' as const,
+  set: (key: 'drives' | 'queue') => goTo('speedreview', '', null, key === 'queue' ? key : null),
+});
 /** "Review with AI" of a drive's signs, beside Signs (components/AiRouteSheet.vue): the administrator's, where it can save. */
 const canAi = !props.readOnly && !isGuest();
 const aiLeft = (signs: SignDrive): number => Math.max(0, signs.frame_count - signs.confirmed_count);
@@ -234,9 +242,14 @@ onBeforeUnmount(() => window.clearTimeout(timer));
 </script>
 
 <template>
-  <SpeedReviewDrive v-if="tabDrive" :key="tabDrive" :route="tabDrive" :read-only="readOnly"/>
-  <template v-else>
+  <template v-if="!tabDrive">
     <SectionHead tab="speedreview"/>
+    <Segmented v-if="!isGuest()" v-model="section" :options="reviewTabs" label="Review section" class="iv-subnav"/>
+  </template>
+  <InterventionReview v-if="tabIntervention" :status="status" :read-only="readOnly" :drives="drives ?? []"
+                      @run="(name, state) => emit('run', name, state)" @stop="emit('stop', $event)" @details="emit('details', $event)"/>
+  <SpeedReviewDrive v-else-if="tabDrive" :key="tabDrive" :route="tabDrive" :read-only="readOnly"/>
+  <template v-else>
     <ReadLogsCard v-if="!isGuest()" :drives="drives" :error="error" :read-only="readOnly" @changed="reload"/>
     <section class="card sr-drives" aria-labelledby="sr-drives-title">
       <div class="ds-head">

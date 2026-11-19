@@ -367,10 +367,12 @@ const numbers = computed(() => {
                     @run="(name, state) => emit('run', name, state, undefined, {...brainChoices.option, ...starts.brain.option, ...signNetworks.option})"/>
         <p v-if="brainLabels?.training" class="latest-none" id="train-brain-marked">It learns every dashcam drive, each whole:
           <strong>{{ plural(brainLabels.training.drives, 'drive') }}</strong>,
-          <strong>{{ brainLabels.training.hours.toFixed(1) }}</strong> h.</p>
+          <strong>{{ brainLabels.training.hours.toFixed(1) }}</strong> h.<template v-if="brainLabels.training.interventions">
+          Plus {{ plural(brainLabels.training.interventions, 'reviewed intervention') }} from assisted drives
+          ({{ Math.round(brainLabels.training.intervention_seconds ?? 0) }} s selected).</template></p>
         <p v-if="brainLabels?.problem" class="latest-none warn-text" id="train-brain-labels">{{ brainLabels.problem }}</p>
         <p v-else-if="brainLabels?.partitions" class="latest-none" id="train-brain-labels">Your speed on
-          {{ plural(brainLabels.drives?.length ?? 0, 'drive') }} (one whose logs show openpilot driving, or whose frames changed, stays out), the blocks of Speed review as its corrections:
+          {{ plural(brainLabels.drives?.length ?? 0, 'drive') }}, with the blocks of Speed review as corrections:
           <strong>{{ thousands(brainLabels.partitions.train.speed) }}</strong> seconds to learn from,
           <strong>{{ thousands(brainLabels.partitions.validation.speed) }}</strong> to watch it on,
           <strong>{{ thousands(brainLabels.partitions.test.speed) }}</strong> for the test.<template

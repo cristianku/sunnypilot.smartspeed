@@ -118,6 +118,12 @@ ENGAGED_SERIES = ('sd_enabled', 'sd_active', 'mads_active', 'lat_active', 'long_
 
 SCHEMA_STATEMENTS = (
     'CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)',
+    # Discovery may retire a proposal but must never overwrite the person's decision on it.
+    '''CREATE TABLE IF NOT EXISTS speed_interventions (
+        route TEXT NOT NULL, event TEXT NOT NULL, at_ns INTEGER NOT NULL, kind TEXT NOT NULL, source TEXT NOT NULL,
+        active INTEGER NOT NULL DEFAULT 1, decision TEXT NOT NULL DEFAULT 'pending',
+        start_ns INTEGER, end_ns INTEGER, kph INTEGER, reviewer TEXT, revision INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (route, event))''',
     # Read by nothing since 8 Nov 2026: kept for its history.
     '''CREATE TABLE IF NOT EXISTS speed_stretches (
         route TEXT NOT NULL, start_ns INTEGER NOT NULL, end_ns INTEGER NOT NULL, kph INTEGER, state TEXT NOT NULL,

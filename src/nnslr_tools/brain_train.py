@@ -877,11 +877,13 @@ def train_brain(data_root: Path, run_dir: Path, merged_of, *, pool: str = 'grid'
                                                              if applicability else 'the brain is not taught whose road a sign is of.'))
     drives = dataset(root, merged_of, routes, log=log, rate=RATE_HZ, need_pictures=not dry_run, types=types,
                      networks=sign_networks, other_road_boxes=applicability)
-    if not drives and not counts['drives']:
+    if not drives and not counts['drives'] and not counts.get('intervention_drives'):
         raise ValueError('no dashcam drive to learn from: drive with sunnylink › Toggles › Enable sunnypilot off, '
                          'then Read the logs on Data › Speed review')
     if not drives:
-        raise ValueError(f'none of the {counts["drives"]} dashcam drives gave the brain a drive to learn: see the '
+        eligible = (f'{counts["drives"]} dashcam drives' if not counts.get('intervention_drives')
+                    else 'eligible dashcam drives and intervention clips')
+        raise ValueError(f'none of the {eligible} gave the brain a drive to learn: see the '
                          'lines above for why each was left out'
                          + ('' if routes is None else ' (only those of the start of this run: a new NAME takes the '
                                                       'drives of today)'))

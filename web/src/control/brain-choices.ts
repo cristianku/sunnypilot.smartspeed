@@ -72,7 +72,7 @@ export function useBrainChoices() {
   /** What the seeds are, on their choice. */
   const seedsNote = 'Seed 0 alone, or three networks that differ only by chance, to compare in Models, in three times the time.';
   /** What Drives is, on its choice. */
-  const drivesNote = 'Every dashcam drive, or the drives an earlier brain run took: two runs on the same drives compare fairly in Models.';
+  const drivesNote = 'Whole dashcam drives and reviewed intervention intervals, or only the drives an earlier run used.';
   return reactive({works, road, types, pool, numberPath, picture, keep, balance, seeds, map, applicability, routesFrom, option, words, note,
     numberNote, seedsNote, drivesNote});
 }
