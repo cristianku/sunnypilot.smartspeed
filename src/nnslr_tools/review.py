@@ -1722,6 +1722,18 @@ def make_handler(app: ReviewApp):
             store = speed_review.store_for(app.root)
             drives = drive_review.store_for(app.root)
             drive = r'/api/speed-review/drives/([0-9a-f]{8}--[0-9a-f]{10})'
+            if path == '/api/speed-review/interventions':
+                from nnslr_tools.interventions import queue
+                self._json(200, queue(store, drives))
+                return
+            match = re.fullmatch(drive + '/interventions', path)
+            if match:
+                from nnslr_tools.interventions import detail
+                try:
+                    self._json(200, detail(store, drives, match.group(1)))
+                except speed_review.SpeedReviewError as exc:
+                    self._problem(exc.status, exc.reason, exc.message, True)
+                return
             if path == '/api/speed-review/drives':
                 self._json(200, {'ok': True, 'drives': speed_review.drives_list(store, drives)})
                 return
@@ -1885,7 +1897,7 @@ def make_handler(app: ReviewApp):
             if content_type.split(';')[0].strip().lower() != 'application/json':
                 self._problem(415, 'unsupported_media_type', 'Only JSON data is accepted.', True)
                 return
-            match = re.fullmatch(r'/api/speed-review/drives/([0-9a-f]{8}--[0-9a-f]{10})/(blocks|works|road|road-type)', path)
+            match = re.fullmatch(r'/api/speed-review/drives/([0-9a-f]{8}--[0-9a-f]{10})/(blocks|works|road|road-type|interventions)', path)
             self._require_person()
             if not app.panel.actions_enabled:
                 raise PanelError(403, 'actions_disabled', 'The panel is read-only on this server.')
@@ -1907,7 +1919,8 @@ def make_handler(app: ReviewApp):
                 self._json(200, answer)
                 return
             route = match.group(1)
-            write = {'blocks': speed_review.save_block, 'works': speed_review.save_works,
+            from nnslr_tools.interventions import decide
+            write = {'interventions': decide, 'blocks': speed_review.save_block, 'works': speed_review.save_works,
                      'road': speed_review.save_road, 'road-type': speed_review.save_road_type}[match.group(2)]
             try:
                 answer = write(speed_review.store_for(app.root), drive_review.store_for(app.root), route, body, reviewer)

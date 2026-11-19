@@ -283,7 +283,7 @@ echo "balance:      $([[ "$BALANCE" == "1" ]] && echo "by situation" || echo off
 if [[ -n "$ROUTES_FROM" ]]; then
   echo "drives:       the same as $ROUTES_FROM"
 else
-  echo "drives:       every dashcam drive"
+  echo "drives:       every dashcam drive and reviewed intervals of assisted drives"
 fi
 echo "output:       $(printf "$RUN_ROOT-s%s " "${SEEDS[@]}")"
 echo "data root:    $DATA_ROOT"

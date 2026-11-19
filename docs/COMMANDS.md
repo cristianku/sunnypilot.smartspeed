@@ -120,6 +120,10 @@ These helpers are the daily flow, and the portal's buttons run them. Each one sk
 
 ## The `nnslr` command
 
+`nnslr interventions [--data-root DIR]` reads scanned logs and refreshes the manual longitudinal intervention queue
+in `annotations/speed_review.sqlite`. Existing reviews are preserved. The portal runs this command from
+**Speed and sign review › Interventions › Find interventions** with the site's Python; it reads no video and starts no training.
+
 `nnslr` is the project's command-line tool, and `nnslr <subcommand> --help` gives the exact options. Commands marked GPU run from `.venv-gpu` (`.venv-gpu/bin/nnslr`), and most of them accept `--dry-run` for a CPU-only plan.
 
 **Environment and checks**

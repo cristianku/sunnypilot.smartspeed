@@ -43,7 +43,7 @@ function flip(key: Switch): void {
       <Segmented v-model="choices.seeds" :options="SEEDS_OPTIONS" label="The seeds: seed 0 alone, or three to compare in Models"/></span>
     <label v-if="runs?.length" class="bc-pick" :title="choices.drivesNote"><span>Drives</span>
       <select v-model="choices.routesFrom" :id="id + '-drives'">
-        <option value="">All dashcam drives</option>
+        <option value="">Dashcam drives and reviewed interventions</option>
         <option v-for="run in runs" :key="run.run" :value="run.run">Same drives as {{ run.run }} ({{ run.drives }})</option>
       </select></label>
   </div>

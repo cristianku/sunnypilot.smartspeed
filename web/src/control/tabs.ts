@@ -58,7 +58,7 @@ export const currentTab = ref<ControlTab>(tabOf(location.pathname) ?? 'overview'
 /** The tabs with a drive of their own at "?drive=<route>". */
 const DRIVE_TABS: readonly ControlTab[] = ['speedreview', 'signdistance', 'drive'];
 /** The tabs whose drive has one thing of its own opened in the address: a sign on Sign distance ("&sign=<key>"). */
-const ITEM_KEY: Partial<Record<ControlTab, string>> = {signdistance: 'sign'};
+const ITEM_KEY: Partial<Record<ControlTab, string>> = {signdistance: 'sign', speedreview: 'intervention'};
 /** The drive of an address on Speed review, Sign distance or Models › Drive ("/speed-review?drive=<route>"), or null (the
  * list, or another tab). */
 function driveOf(path: string, search: string): string | null {
@@ -77,13 +77,14 @@ export const tabDrive = ref<string | null>(driveOf(location.pathname, location.s
 const tabItem = ref<string | null>(itemOf(location.pathname, location.search));
 /** The sign opened on Sign distance, null for none. */
 export const tabSign = computed(() => currentTab.value === 'signdistance' ? tabItem.value : null);
+export const tabIntervention = computed(() => currentTab.value === 'speedreview' && !isGuest() ? tabItem.value : null);
 
 /** The address of a tab, with its drive and the sign of that drive. */
 function addressOf(tab: ControlTab, drive: string | null, item: string | null): string {
   const query = new URLSearchParams();
   if (drive !== null) query.set('drive', drive);
   const key = ITEM_KEY[tab];
-  if (drive !== null && item !== null && key !== undefined) query.set(key, item);
+  if ((drive !== null || tab === 'speedreview') && item !== null && key !== undefined) query.set(key, item);
   const search = query.toString();
   return TAB_PATH[tab] + (search ? '?' + search : '');
 }
@@ -103,7 +104,7 @@ function markCurrent(tab: ControlTab): void {
 export function goTo(wanted: ControlTab, hash = '', drive: string | null = null, item: string | null = null): void {
   // A reviewer from outside has one list, their own.
   const tab = isGuest() && drive === null ? 'overview' : wanted;
-  const nextItem = drive === null || ITEM_KEY[tab] === undefined ? null : item;
+  const nextItem = (drive === null && tab !== 'speedreview') || ITEM_KEY[tab] === undefined ? null : item;
   if (tab === currentTab.value && !hash && drive === tabDrive.value && nextItem === tabItem.value) return;
   // A drive opened from its list: its Back control goes back in the history, to the list as it was.
   const fromList = drive !== null && currentTab.value === tab && tabDrive.value === null;

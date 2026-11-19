@@ -12,6 +12,7 @@ export const JOB_STATE: Record<JobState, [label: string, kind: string]> = {
 
 /** The group of each action (nnslr_tools.panel.ACTIONS): a terminal activity of the same group is that work. */
 export const ACTION_GROUP: Record<ActionName, string> = {
+  interventions: 'prepare',
   fetch: 'fetch', fetch_connect: 'connect', prepare: 'prepare', prepare_again: 'prepare', measure_proposer: 'train', setup_vlm: 'train', dataset: 'train', train: 'train', train_continue: 'train', train_resume: 'train',
   train_classifier: 'train', train_cutter: 'train', train_decider: 'train', train_brain: 'train', brain_replay: 'train', regression: 'train', update: 'update', ai_review: 'ai',
   measure_ai_reviewer: 'ai',
@@ -23,6 +24,7 @@ export const ACTION_GROUP: Record<ActionName, string> = {
 
 /** The icon of each action, on its button. */
 export const ACTION_ICON: Record<ActionName, IconName> = {
+  interventions: 'routes',
   fetch: 'download', fetch_connect: 'download', prepare: 'prepare', prepare_again: 'resume', measure_proposer: 'train', setup_vlm: 'download', dataset: 'import', train: 'train', train_continue: 'train',
   train_resume: 'resume', train_classifier: 'train', train_cutter: 'train', train_decider: 'train', train_brain: 'train',
   regression: 'train', brain_replay: 'train', update: 'update', ai_review: 'ai',
@@ -37,6 +39,7 @@ export const ACTION_ICON: Record<ActionName, IconName> = {
  * in the phone menu), the link of "Running now" in the server's panel. The update has no tab: the page reloads.
  */
 export const ACTION_TAB: Record<ActionName, string | null> = {
+  interventions: '/speed-review',
   fetch: '/prepare', fetch_connect: '/prepare', prepare: '/prepare', prepare_again: '/prepare', setup_vlm: '/prepare',
   dataset: '/dataset', road_types: '/prepare',
   train: '/train', train_continue: '/train', train_resume: '/train', train_classifier: '/train', train_brain: '/train',

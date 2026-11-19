@@ -843,6 +843,51 @@ def test_every_dashcam_drive_is_learnt_each_whole_with_nothing_to_mark(tmp_path)
     assert said == [f'{on}: {targets.SUNNYPILOT_ON}, left out']
 
 
+def test_assisted_drive_learns_only_confirmed_intervals_and_only_on_one_frozen_partition(tmp_path):
+    from nnslr_tools import interventions, speed_review
+    targets = _targets()
+    write_drive(tmp_path, ROUTE, [(0, i) for i in range(50)])
+    info = {'t0_ns': 0, 'span_ns': [0, 50 * NS], 'meta': {'car': {'passive': False}}}
+    scanned(tmp_path, ROUTE, info)
+    frozen(tmp_path, {ROUTE: ['train'] * 50}, {ROUTE: [f'0/{i}' for i in range(50)]})
+    store = speed_review.store_for(tmp_path)
+    merged = {'frames': encoded(50), 'span': info['span_ns'], 'series': {'v_ego': [[0, 41], [30*NS, 42]],
+              'long_active': [[0, True], [20*NS, False], [33*NS, True], [40*NS, False]],
+              'cruise_enabled': [[0, False]], 'gas': [[0, False], [20*NS, True], [30*NS, False]],
+              'brake': [[0, False], [40*NS, True]]}}
+    class Logs:
+        def summary(self, route):
+            return info
+        def merged(self, route):
+            return merged
+
+    def read():
+        return targets.dataset(tmp_path, lambda route: merged, inputs=False, log=lambda msg: None)
+
+    events = interventions.candidates(merged)
+    interventions.replace_candidates(store, ROUTE, events)
+    assert not read()
+    for revision, (kind, a, b, kph) in enumerate([('driver', 20, 24, None), ('block', 38, 42, 30)]):
+        interventions.decide(store, Logs(), ROUTE, {'event': events[revision][0], 'decision': kind, 'base_revision': revision,
+                             'event_revision': 0, 'start_ns': a*NS, 'end_ns': b*NS, 'kph': kph}, 'driver')
+    def answers(drive):
+        return [(int(t//NS), int(targets.class_kph(c))) for t, c, w in
+                zip(drive['ns'], drive['speed'], drive['speed_weight']) if w]
+    drive, = read()
+    assert drive['ns'][0] == 5*NS  # pre-roll, with no target
+    assert answers(drive) == [(i, 41) for i in range(20,24)] + [(i, 30) for i in range(38,42)]
+    assert all((drive['speed_weight'] == 0) <= (drive['type_weight'] == 0))
+    live_rate, = targets.dataset(tmp_path, lambda route: merged, inputs=False, rate=4, need_pictures=False)
+    assert live_rate['speed_weight'].sum() == 32  # two 4 s intervals, 4 steps/s
+    assert live_rate['frames'][0]['decoded'] == 100 and live_rate['cuts']  # correct picture rows across the gap
+    # A rescan that no longer proves human ownership must not silently teach the dashboard speed.
+    merged['series']['long_active'][1][1] = None
+    assert answers(read()[0]) == [(i, 30) for i in range(38,42)]
+    # Second event crosses train/validation: never split it to make two samples.
+    frozen(tmp_path, {ROUTE: ['train'] * 39 + ['validation'] * 11}, {ROUTE: [f'0/{i}' for i in range(50)]})
+    assert not answers(read()[0])
+
+
 def test_a_frozen_drive_whose_frames_changed_is_named():
     with pytest.raises(_targets().FramesChanged, match='frames changed'):
         _targets().frame_partitions('old', [at_cell('0/0', (10, 10))], SPLIT)

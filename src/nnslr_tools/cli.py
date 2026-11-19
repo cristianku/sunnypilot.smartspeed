@@ -1701,6 +1701,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_road.add_argument("--all", action="store_true", help="every route with GPS positions (nnslr gps)")
     p_road.add_argument("--data-root", help="default: NNSLR_DATA_ROOT or <repo>/data")
     p_road.set_defaults(func=_cmd_road_types)
+    p_interventions = sub.add_parser("interventions", help="find manual longitudinal interventions in scanned drives for Speed review")
+    p_interventions.add_argument("--data-root", help="default: NNSLR_DATA_ROOT or <repo>/data")
+    p_interventions.set_defaults(func=_cmd_interventions)
+
     p_tunnels = sub.add_parser("tunnels", help="the tunnels of the scanned drives from the map and the comma's GPS, "
                                                "written as marks of the kind tunnel in Speed review where the map is "
                                                "sure (reviewer osm; a person's marks win)")
@@ -3004,6 +3008,13 @@ def _cmd_export_brain(args: argparse.Namespace) -> int:
     print(json.dumps(brain_export.export_brain_onnx(run / brain_export.CHECKPOINT, run / 'export' / brain_export.BRAIN_FILE,
                                                     data_root=root, merged_of=lambda route: store.merged(route, keep=False),
                                                     route=args.route), indent=2))
+    return 0
+
+
+def _cmd_interventions(args: argparse.Namespace) -> int:
+    from nnslr_tools.interventions import prepare
+    from nnslr_tools.preannotate import resolve_data_root
+    prepare(resolve_data_root(Path(args.data_root) if args.data_root else None))
     return 0
 
 

@@ -172,6 +172,7 @@ AI_REVIEW_STEPS = (('review', 'Review the frames with the AI', 100),)
 AI_MEASURE_STEPS = (('measure', 'Measure the AI reviewer', 100),)
 # [ai-reviewer] - END
 STEPS = {'fetch': FETCH_STEPS, 'fetch_connect': CONNECT_STEPS, 'prepare': PREPARE_STEPS, 'dataset': DATASET_STEPS, 'train': TRAIN_STEPS,
+         'interventions': (('interventions', 'Find manual interventions in the scanned logs', 100),),
          'train_continue': TRAIN_STEPS, 'train_resume': TRAIN_STEPS, 'train_classifier': CLASSIFIER_STEPS,
          'train_cutter': CUTTER_STEPS, 'train_decider': DECIDER_STEPS,
          'train_brain': BRAIN_STEPS, 'regression': REGRESSION_STEPS,
@@ -188,7 +189,7 @@ WEIGHTED = ('train', 'train_continue', 'train_resume', 'train_classifier', 'trai
             'train_brain', 'regression', 'simulate', 'dataset', 'ai_review',
             'measure_ai_reviewer', 'networks_prepare', 'networks_publish', 'road_types', 'send_to_car',
             'try_on_comma', 'comma_restore', 'road_labeler_train', 'road_labeler_predict',
-            'box_fit_train', 'networks_github_save', 'networks_github_restore')
+            'box_fit_train', 'networks_github_save', 'networks_github_restore', 'interventions')
 
 # The sub-steps of scripts/run_v100_baseline.sh ("== 4/10 ...") and the step they belong to.
 PIPELINE = {1: 'checks', 2: 'checks', 3: 'checks', 4: 'detector', 5: 'reader', 6: 'evaluate', 7: 'export',
@@ -732,6 +733,7 @@ def steps_of(action: str, two_stages: bool = False, signnet: bool = False) -> tu
 
 # The tasks that report their own progress (nnslr_tools.progress) and the step they belong to.
 TASK_STEPS = {'import': 'import', 'validate': 'split', 'split': 'split', 'detector': 'detector',
+              'interventions': 'interventions',
               'reader': 'reader', 'evaluate': 'evaluate', 'hard_examples': 'export', 'export': 'export',
               # scripts/run_classifier.sh: the mining of the cutter's false boxes, the classifier, the chain.
               'mine': 'mine', 'classifier': 'classifier', 'chain': 'chain',

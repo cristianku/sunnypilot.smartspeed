@@ -1191,9 +1191,9 @@ function worksIn(from: number, to: number) {
         </template>
         <template v-else-if="speedOff">
           <h3 id="sr-card-title">Speed review is off on this drive</h3>
-          <p class="dr-hint" id="sr-not-learnt"><strong>sunnypilot was on in this drive: the speed was its own, not yours, and
-            the brain does not learn from it.</strong> It learns only drives with sunnylink › Toggles › Enable sunnypilot off;
-            on this one only its signs are reviewed<template v-if="showSigns && !signsOnly"> (Signs, above)</template>.</p>
+          <p class="dr-hint" id="sr-not-learnt"><strong>sunnypilot was on in this drive.</strong>
+            Its dashboard speed is not a whole-drive training answer. <a v-if="!isGuest()" href="/speed-review?intervention=queue">Review manual interventions</a>
+            <template v-if="showSigns && !signsOnly"> or switch to Signs above</template>.</p>
         </template>
         <template v-else>
           <h3 id="sr-card-title">The answer at {{ clockOf(seconds) }}</h3>

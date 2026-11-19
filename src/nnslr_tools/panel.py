@@ -24,6 +24,7 @@ import signal
 import sqlite3
 import stat
 import subprocess
+import sys
 import threading
 import time
 import urllib.request
@@ -458,6 +459,8 @@ ACTIONS = {
     # The map's limit of every frame of the prepared drives, from their GPS and the map, read offline (Data › Speed
     # review); in the prepare group: it reads the reports a preparation writes.
     'road_types': {'label': 'Read the map', 'group': 'prepare', 'command': [ROAD_TYPES_SCRIPT]},
+    'interventions': {'label': 'Find interventions', 'group': 'prepare',
+                      'command': [sys.executable, '-u', '-m', 'nnslr_tools.cli', 'interventions']},
     # Where each Mapillary photo was taken, for the region of "Train the classifier": network only, a few minutes.
     'mapillary_locations': {'label': 'Locate the Mapillary photos', 'group': 'mapillary', 'command': [LOCATIONS_SCRIPT]},
     # The Mapillary photos cut into windows for "Train the cutter": the CPU for a while, the share read once; the
@@ -1544,6 +1547,9 @@ class Panel:
                 reason = 'no prepared drive'
             elif name == 'road_types':
                 # It reads the GPS and the map: it needs no confirmed frame.
+                pass
+            elif name == 'interventions':
+                # Only cached logs are needed, irrespective of sign reviews.
                 pass
             elif name == 'mapillary_locations':
                 # Network only (no GPU, no confirmed frame): the script and the token of .env.
