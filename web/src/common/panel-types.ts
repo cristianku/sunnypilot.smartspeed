@@ -94,6 +94,8 @@ export interface ActionOptions {
   picture?: 'on' | 'off';
   keep?: 'best' | 'last';
   balance?: 'on' | 'off';
+  /** Stand still (train_brain, #117 step B): off when not given, the table 1..200; on, 0..200 and 0 where the car stood. */
+  stand?: 'on' | 'off';
   seeds?: 'all' | 'one';
   /** The map's limit as an input of the brain (train_brain, #85): off when not given. */
   map?: 'on' | 'off';
@@ -1623,6 +1625,14 @@ export interface BrainSituationErrors {
   baseline_mean_error_kph: number;
   type_baseline_mean_error_kph?: number;
 }
+/** Of a brain trained to stand (#117 step B, brain_train._stand_measure): the stopped frames measured and the share it
+ * said 0 on, the moving ones and the share it said 0 on (a stop where you drove). */
+export interface BrainStandMeasure {
+  stopped: number;
+  stopped_said_0: number | null;
+  moving: number;
+  moving_said_0: number | null;
+}
 export interface BrainSituation {
   all?: BrainSituationErrors | null;
   no_sign: BrainSituationErrors | null;
@@ -1680,6 +1690,10 @@ export interface BrainModel extends ModelBase {
   picture?: boolean | null;
   keep?: 'best' | 'last' | null;
   balance?: boolean | null;
+  /** Trained to say 0 km/h where the car stood (Stand still, #117 step B), and how it did there on validation and test
+   * (brain_train._stand_measure); null for every other brain. */
+  stand?: boolean | null;
+  stand_measure?: {validation: BrainStandMeasure | null; test: BrainStandMeasure | null} | null;
   kept?: {epoch: number; validation_error_by_place_kph: number | null} | null;
   situation?: {validation: BrainSituation; test: BrainSituation} | null;
   /** Its replay (Models › brain › Replay), when it was run. */

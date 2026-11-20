@@ -15,6 +15,10 @@ The network, per frame: encoder (MobileNetV3-small, as the road-type network) ->
 The table is the network's own (build_brain_net's kph, the class_kph buffer, kept in every checkpoint): a class a km/h from
 1 to 200 since 8 Nov 2026 (brain_targets.SPEED_CLASSES), a class every 5 km/h before. A brain of before keeps its own: its
 checkpoint loads with it (brain_export.load_brain), and its contract says it to the car.
+A brain trained to stand (#117 step B, Train › Brain's switch "Stand still", stand_table) has 0 km/h as its first class:
+his dashboard 0 is an answer there, a one-hot on class 0, and the bell of every other answer has nothing on class 0
+(speed_targets). The number in force and the map's limit never reach class 0 either: their path takes it as far from any
+number (number_kph). Every other table has no class 0, and its network and loss are what they were, to the last bit.
 
 loss = cross entropy(speed, his speed) + WORKS_LOSS * binary cross entropy(works, his marks), each only on the frames with
 an answer of its own. The works error goes back through h into the GRU and the layer on the picture's features, which the
@@ -180,6 +184,21 @@ def training_table() -> list[float]:
     return [float(class_kph(index)) for index in range(SPEED_CLASSES)]
 
 
+def stand_table() -> list[float]:
+    """The km/h of each class of a brain trained to stand (#117 step B): 0, then training_table()."""
+    return [0.0] + training_table()
+
+
+def stands(kph) -> bool:
+    """Whether a table (a list, or the class_kph buffer of a checkpoint) is a stand brain's: its first class is 0 km/h."""
+    return _table(kph)[0] == 0.0
+
+
+# Where class 0 of a stand brain is for the number in force and the map's limit: far from any number, past far_kph of the
+# 'bell' path and never within near_kph of the 'class' one. A half float holds it, with a number of 200 off.
+NO_NUMBER_KPH = -1000.0
+
+
 def _table(kph) -> list[float]:
     """kph as a list of km/h in order, one a class: training_table() for None."""
     if kph is None:
@@ -239,6 +258,8 @@ def build_brain_net(groups: tuple[str, ...], *, pool: str = 'grid', works: bool 
         raise ValueError('the heads of the limit ahead are of the brains of 7 to 11 Nov 2026, all of the class path')
     table = _table(kph)
     classes = len(table)
+    if ahead and table[0] == 0.0:
+        raise ValueError('a brain trained to stand has no heads of the limit ahead: those are of the brains of 7 to 11 Nov 2026')
     # A plain number, no buffer: a checkpoint of before has none to load, and the export writes it as a constant.
     near_kph = (min(b - a for a, b in zip(table, table[1:])) if classes > 1 else table[0]) / 2
     # The 'bell' path: how far from the number its bell reaches NUMBER_FLOOR (12 km/h), and what a squared distance is
@@ -294,6 +315,10 @@ def build_brain_net(groups: tuple[str, ...], *, pool: str = 'grid', works: bool 
                 self.metres_head = nn.Linear(hidden, 1)
                 self.metres_gate = nn.Linear(hidden, 1)
             self.register_buffer('class_kph', torch.tensor(table, dtype=torch.float32))
+            # A stand brain's table for the number in force and the map's limit: class 0 at NO_NUMBER_KPH. Not in the
+            # checkpoint (made from class_kph), and None for every other table, whose path stays class_kph's.
+            self.register_buffer('number_kph', torch.tensor([NO_NUMBER_KPH] + table[1:], dtype=torch.float32)
+                                 if table[0] == 0.0 else None, persistent=False)
             self.near_kph = near_kph
 
         def train(self, mode: bool = True):
@@ -302,6 +327,11 @@ def build_brain_net(groups: tuple[str, ...], *, pool: str = 'grid', works: bool 
                 if isinstance(layer, nn.BatchNorm2d):
                     layer.eval()
             return self
+
+        def numbers_kph(self):
+            """The km/h of each class for the number in force and the map's limit: class_kph, a stand brain's
+            number_kph."""
+            return self.class_kph if self.number_kph is None else self.number_kph
 
         def encode(self, images):
             """(N, 3, H, W) 0..1 -> (N, features)."""
@@ -317,14 +347,14 @@ def build_brain_net(groups: tuple[str, ...], *, pool: str = 'grid', works: bool 
                 return extra_input.new_zeros(*extra_input.shape[:-1], classes)
             signs = extra_input[..., signs_at:signs_at + INPUT_SIZES['signs']]
             held = (signs[..., 1:2] > 0) & (signs[..., 6:7] == 0)
-            near = (signs[..., :1] * BRAIN_INPUTS.SIGN_KPH_SCALE - self.class_kph).abs() < self.near_kph
+            near = (signs[..., :1] * BRAIN_INPUTS.SIGN_KPH_SCALE - self.numbers_kph()).abs() < self.near_kph
             return (near & held).to(extra_input.dtype)
 
         def map_number(self, extra_input):
             """(B, T, inputs) -> (B, T, classes): 1 on the class of the limit the map has, all 0 with no map. Only a
             network with the map's path (trust_map)."""
             limit = extra_input[..., map_at:map_at + INPUT_SIZES[MAP_GROUP]]
-            near = (limit[..., :1] * BRAIN_INPUTS.SIGN_KPH_SCALE - self.class_kph).abs() < self.near_kph
+            near = (limit[..., :1] * BRAIN_INPUTS.SIGN_KPH_SCALE - self.numbers_kph()).abs() < self.near_kph
             return (near & (limit[..., 1:2] > 0)).to(extra_input.dtype)
 
         def bell(self, number, held):
@@ -332,7 +362,7 @@ def build_brain_net(groups: tuple[str, ...], *, pool: str = 'grid', works: bool 
             number (the module's text), max(-(class_kph - number)^2 / (2 * NUMBER_SIGMA_KPH^2), NUMBER_FLOOR) where it
             counts and 0 where not. The distance is cut at far_kph before its square, which is the same number: past
             the cut no value is above 144, whatever comes in, for the comma's half floats."""
-            away = (self.class_kph - number * BRAIN_INPUTS.SIGN_KPH_SCALE).clamp(-far_kph, far_kph)
+            away = (self.numbers_kph() - number * BRAIN_INPUTS.SIGN_KPH_SCALE).clamp(-far_kph, far_kph)
             return away * away * bell_scale * held.to(number.dtype)
 
         def number_bell(self, extra_input):
@@ -409,12 +439,16 @@ def outputs(said: tuple, *, ahead: bool = False, road: bool = False, types: bool
 def speed_targets(speed, kph=None, sigma_kph: float = SPEED_SIGMA_KPH):
     """(..., classes) the answer of each frame as chances over the classes: a bell of sigma_kph around the km/h of its class,
     cut at the ends of the table and summing to 1. speed: classes (long), -1 (no class) as the first one, a frame that
-    has no weight anyway. kph: the km/h of each class (the network's class_kph), None the table of today's training."""
+    has no weight anyway. kph: the km/h of each class (the network's class_kph), None the table of today's training.
+    A stand brain's table (class 0 is 0 km/h, #117 step B): an answer of 0 is all on class 0, and the bell of any other
+    answer has nothing there. Every other table has no 0 km/h: its bell is what it was, to the last bit."""
     torch = _torch()
     table = (torch.tensor(training_table(), device=speed.device) if kph is None else
              torch.as_tensor(kph, device=speed.device).flatten()).to(torch.float32)
     answer = table[speed.clamp(0, len(table) - 1)]
     bell = torch.exp(-0.5 * ((table - answer[..., None]) / sigma_kph) ** 2)
+    zero = table == 0
+    bell = torch.where((answer == 0)[..., None], zero.to(bell.dtype), bell * ~zero)
     return bell / bell.sum(dim=-1, keepdim=True)
 
 

@@ -5,7 +5,7 @@
 // picture's features as Mean or Grid, the number in force as a Bell or on its Class (#104), its seeds as Three or One, and
 // its drives (every dashcam drive or those of an
 // earlier brain run, runs: BrainLabels.same_drives; no choice while there is none).
-import {BALANCE_OPTIONS, KEEP_OPTIONS, NUMBER_PATH_OPTIONS, PICTURE_OPTIONS, POOL_OPTIONS, SEEDS_OPTIONS,
+import {BALANCE_OPTIONS, KEEP_OPTIONS, NUMBER_PATH_OPTIONS, PICTURE_OPTIONS, POOL_OPTIONS, SEEDS_OPTIONS, STAND_OPTIONS,
   type BrainChoice} from './brain-choices';
 import type {BrainRouteRun} from '../common/panel-types';
 import Segmented from './Segmented.vue';
@@ -39,6 +39,8 @@ function flip(key: Switch): void {
       <Segmented v-model="choices.keep" :options="KEEP_OPTIONS" label="Keep: best on validation or last epoch"/></span>
     <span class="bc-pick" title="Give rare combinations of sign state, road type and lead car more weight in the speed loss."><span>Balance</span>
       <Segmented v-model="choices.balance" :options="BALANCE_OPTIONS" label="Balance: off or by situation"/></span>
+    <span class="bc-pick" :title="choices.standNote"><span>Stand still</span>
+      <Segmented v-model="choices.stand" :options="STAND_OPTIONS" label="Stand still: off, or 0 km/h where the car stood"/></span>
     <span class="bc-pick" :title="choices.seedsNote"><span>Seeds</span>
       <Segmented v-model="choices.seeds" :options="SEEDS_OPTIONS" label="The seeds: seed 0 alone, or three to compare in Models"/></span>
     <label v-if="runs?.length" class="bc-pick" :title="choices.drivesNote"><span>Drives</span>

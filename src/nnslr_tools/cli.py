@@ -1819,6 +1819,9 @@ def build_parser() -> argparse.ArgumentParser:
                              help="keep the best epoch by validation error by place, or the last epoch")
     p_brain_net.add_argument("--balance", action="store_true",
                              help="balance the speed loss by number state, road type and lead on train")
+    p_brain_net.add_argument("--stand", action="store_true",
+                             help="Stand still (#117 step B): classes 0..200, where the car stood the answer is 0 and "
+                                  "enters the loss; the export says zero_valid. Off: the table 1..200 of before")
     p_brain_net.add_argument("--epochs", type=int, default=None)
     p_brain_net.add_argument("--seed", type=int, default=0)
     p_brain_net.add_argument("--init-from", default=None,
@@ -2946,12 +2949,13 @@ def _cmd_train_brain(args: argparse.Namespace) -> int:
                                      init_from=Path(args.init_from) if args.init_from else None,
                                      sign_networks=_sign_networks(args), map_limit=args.map_limit,
                                       applicability=not args.no_applicability, number_path=args.number_path,
-                                      picture=not args.no_picture, keep=args.keep, balance=args.balance)
+                                      picture=not args.no_picture, keep=args.keep, balance=args.balance,
+                                      stand=args.stand)
     print(json.dumps({**{part: {**{key: result[part][key] for key in ('speed', 'speeds_said', 'one_speed', 'follow_the_sign')},
                                 'applicability': result[part].get('applicability')}
                          for part in ('train', 'validation', 'test')},
                       **{part: result[part] for part in ('validation_swapped', 'test_swapped')},
-                       **{part: result[part] for part in ('number_path', 'trust', 'picture', 'keep', 'kept', 'balance')
+                       **{part: result[part] for part in ('number_path', 'trust', 'picture', 'keep', 'kept', 'balance', 'stand')
                           if part in result},
                       **{part: {'speed': result[part]['speed']} for part in ('validation_no_map', 'test_no_map')
                          if part in result}}, indent=2))

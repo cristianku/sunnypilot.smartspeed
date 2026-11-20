@@ -439,15 +439,16 @@ PUBLISHED_OPERATORS = {'Abs', 'Add', 'And', 'Cast', 'Concat', 'Conv', 'Div', 'Eq
                        'Slice', 'Split', 'Sub', 'Tanh'}
 
 
-def path_brain(path, number_path=None, map_path=False, trust=1.5):
+def path_brain(path, number_path=None, map_path=False, trust=1.5, kph=None):
     """A checkpoint as brain_train writes it, with a trust that is not zero, so that the number's path says something.
-    number_path None: a checkpoint of before 16 Nov 2026, built as it was then and without the word."""
+    number_path None: a checkpoint of before 16 Nov 2026, built as it was then and without the word. kph: its table
+    (brain_net.stand_table for a brain trained to stand), None for today's."""
     import torch
 
     from nnslr_tools.brain_net import build_brain_net
     groups = (*GROUPS, 'map_limit') if map_path else GROUPS
     torch.manual_seed(0)
-    model = build_brain_net(groups, pool='grid', works=True, pretrained=False, map_path=map_path,
+    model = build_brain_net(groups, pool='grid', works=True, pretrained=False, map_path=map_path, kph=kph,
                             **({} if number_path is None else {'number_path': number_path}))
     with torch.no_grad():
         model.trust.weight.normal_(std=0.1)
@@ -569,3 +570,37 @@ def test_the_lines_of_the_step_stay_where_the_published_file_has_them():
     assert lines[90].strip() == 'hidden_out = gru_step(self.model.gru, x, hidden)'
     assert lines[92].strip() == 'speed = self.model.speed(hidden_out, extra)'
     assert lines[101].strip() == 'found += (self.model.type_head(hidden_out),)'
+
+
+def test_a_brain_of_today_says_nothing_of_0_in_its_contract(tmp_path, monkeypatch):
+    path = checkpoint(tmp_path / 'brain-last.pt', monkeypatch)
+    brain_export.export_brain_onnx(path, tmp_path / 'brain.onnx')
+    assert 'zero_valid' not in json.loads((tmp_path / 'brain.onnx.contract.json').read_text())['output']
+
+
+@pytest.mark.parametrize('number_path', ['class', 'bell'])
+def test_a_brain_trained_to_stand_says_its_0_is_valid_and_steps_on_the_car_as_in_pytorch(tmp_path, number_path):
+    """#117 step B: the table 0..200 goes to the car with output.zero_valid, the word the car's brain.py reads (without it
+    the car takes a 0 for "not sure"); its number in force never lands on 0, in the file as in PyTorch."""
+    import numpy as np
+    import onnxruntime
+    import torch
+
+    from nnslr_tools.brain_net import stand_table
+    path = tmp_path / 'brain-last.pt'
+    trained, groups = path_brain(path, number_path=number_path, kph=stand_table())
+    model, _saved = brain_export.load_brain(path)
+    assert brain_export.table_of(model) == list(range(0, 201)) and model.number_kph is not None
+    done = brain_export.export_brain_onnx(path, tmp_path / 'brain.onnx')
+    assert done['verification']['passed']
+    contract = json.loads((tmp_path / 'brain.onnx.contract.json').read_text())
+    assert contract['output']['zero_valid'] is True
+    assert contract['output']['kph'] == list(range(0, 201)) and contract['output']['shape'] == [1, 201]
+    session = brain_export.check_session(onnxruntime, tmp_path / 'brain.onnx')
+    image, hidden = torch.rand(1, 3, 144, 256), torch.rand(1, 128) * 2 - 1
+    for kph in (30, 60, 130):
+        extra = numbered(groups, kph)
+        with torch.no_grad():
+            whole = trained(image[None], extra[None], hidden)[0][0].numpy()
+        got = session.run(None, {'image': image.numpy(), 'extra': extra.numpy(), 'hidden': hidden.numpy()})[0]
+        assert np.allclose(got, whole, rtol=brain_export.RTOL, atol=brain_export.ATOL)

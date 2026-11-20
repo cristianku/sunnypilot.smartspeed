@@ -45,6 +45,7 @@ from nnslr_tools.model_roles import (
     reads_the_map,
     record_on_car,
     role_of,
+    stands_still,
     takes_every_box,
     takes_the_driver,
 )
@@ -77,6 +78,8 @@ CAR_MAP_SERVICE = 'liveMapDataSP'
 # The car's reader of the brain, and the word of its contract that tells it to give the boxes of every sign read.
 CAR_BRAIN = 'openpilot/sunnypilot/speed_limits/brain.py'
 CAR_EVERY_BOX = 'other_road_boxes'
+# The word of the contract a brain trained to stand has (brain_export, output.zero_valid, #117 step B).
+CAR_ZERO_VALID = 'zero_valid'
 MANIFEST = 'speed_limits.json'
 MAX_VERSION = 40
 GIT_TIMEOUT = 180
@@ -122,7 +125,8 @@ def brain_refused(index: ModelIndex) -> str:
     if entry is None:
         return ''
     return _picture_refused(entry) or (_driver_refused(entry) if takes_the_driver(entry) else
-            _filtered_refused(entry) or _networks_refused(index, entry) or _map_refused(entry) or _boxes_refused(entry))
+            _filtered_refused(entry) or _networks_refused(index, entry) or _map_refused(entry) or _boxes_refused(entry)
+            or _stand_refused(entry))
 
 
 def _networks_refused(index: ModelIndex, entry: dict) -> str:
@@ -186,17 +190,38 @@ def _map_refused(entry: dict) -> str:
             'give it yet: push the daemon that reads liveMapDataSP first, or choose a brain trained without the map')
 
 
-def car_gives_every_box(clone: Path | None = None) -> bool:
-    """Whether the comma gives a brain the boxes of every sign read, those of another road too, when its contract asks
-    (step.other_road_boxes): the brain.py of the pushed speed-limits branch, which is what the comma is built from,
-    knows the word. False when the clone or its branch cannot be read."""
+def _car_brain_knows(word: str, clone: Path | None = None) -> bool:
+    """Whether the brain.py of the pushed speed-limits branch, which is what the comma is built from, knows a word of
+    the contract. False when the clone or its branch cannot be read."""
     clone = Path(clone or os.environ.get(SUNNYPILOT_CLONE_ENV) or SUNNYPILOT_CLONE)
     try:
         shown = subprocess.run(['git', '-C', str(clone), 'show', f'{CAR_BRANCH}:{CAR_BRAIN}'], capture_output=True,
                                text=True, timeout=GIT_TIMEOUT, check=False)
     except (OSError, subprocess.SubprocessError):
         return False
-    return shown.returncode == 0 and CAR_EVERY_BOX in shown.stdout
+    return shown.returncode == 0 and word in shown.stdout
+
+
+def car_gives_every_box(clone: Path | None = None) -> bool:
+    """Whether the comma gives a brain the boxes of every sign read, those of another road too, when its contract asks
+    (step.other_road_boxes)."""
+    return _car_brain_knows(CAR_EVERY_BOX, clone)
+
+
+def car_reads_stand(clone: Path | None = None) -> bool:
+    """Whether the comma reads the 0 of a brain trained to stand as "stand" (output.zero_valid, brainStatus, #117 step
+    B), not as today's "not sure"."""
+    return _car_brain_knows(CAR_ZERO_VALID, clone)
+
+
+def _stand_refused(entry: dict) -> str:
+    """Why a brain trained to stand cannot go on the car, '' when it can or it was not: a comma whose brain.py does not
+    know output.zero_valid would take its 0 for "not sure" and refuse the brain's file."""
+    if not stands_still(entry) or car_reads_stand():
+        return ''
+    return (f'the brain in use, {entry["id"]}, was trained to say 0 km/h where the car stood (Stand still), and the '
+            f'brain.py of sunnypilot’s {CAR_BRANCH} does not read that 0 yet: push the one that does first, or choose '
+            'a brain trained with Stand still off')
 
 
 def _boxes_refused(entry: dict) -> str:
@@ -346,6 +371,8 @@ def _brain(root: Path, runs: RunsIndex, index: ModelIndex, on_car: bool = True) 
         raise ValueError(_map_refused(entry))
     if on_car and _boxes_refused(entry):
         raise ValueError(_boxes_refused(entry))
+    if on_car and _stand_refused(entry):
+        raise ValueError(_stand_refused(entry))
     run = runs._run_dir(entry['run'])
     weights = None if run is None else runs._file(run, BRAIN_WEIGHTS)
     if weights is None:

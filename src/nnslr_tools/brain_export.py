@@ -316,6 +316,9 @@ def export_brain_onnx(checkpoint: Path, output: Path, *, data_root: Path | None 
         'inputs': [{'name': name, 'shape': shapes[name], 'dtype': 'float32'} for name in INPUT_NAMES],
         'output': {'name': 'speed', 'shape': [1, len(table)], 'kph': table,
                    'decode': 'kph[argmax(speed)]', **({'metres_scale': METRES_SCALE} if model.ahead else {}),
+                   # A brain trained to stand (#117 step B): its 0 is an answer, "stand", where for every other brain the
+                   # car reads 0 as "not sure" (brain.py BrainReader.zero_valid, speedVisionSP.brainStatus). Only then.
+                   **({'zero_valid': True} if table[0] == 0 else {}),
                    **({'road_types': road_types} if road_types else {})},
         'outputs': outputs,
         'step': {'rate_hz': rate, 'clock': 'last' if rate == 1.0 else 'schedule',

@@ -58,6 +58,8 @@ set -euo pipefail
 # NNSLR_BRAIN_PICTURE (1, default: with image features; 0: without, for comparison only),
 # NNSLR_BRAIN_KEEP (best, default: lowest validation error by place; last: the last epoch),
 # NNSLR_BRAIN_BALANCE (0, default: off; 1: balance the speed loss by situation),
+# NNSLR_BRAIN_STAND (0, default: off, the table 1..200 of before; 1: Stand still, #117 step B: classes 0..200, where
+# the car stood the answer is 0 and enters the loss; Publish refuses it until the car's brain.py reads zero_valid),
 # NNSLR_BRAIN_POOL (grid: the picture's features keep where they are; mean: not), NNSLR_BRAIN_NUMBER_PATH (bell, the
 # default since 16 Nov 2026, #104: the number in force reaches the answer as a bell around it, the shape of the answer;
 # class: on its class alone, as every brain before, the comparison; Train › Brain's Number), NNSLR_BRAIN_INIT_FROM (an earlier
@@ -91,6 +93,7 @@ NUMBER_PATH="${NNSLR_BRAIN_NUMBER_PATH:-bell}"
 PICTURE="${NNSLR_BRAIN_PICTURE-1}"
 KEEP="${NNSLR_BRAIN_KEEP-best}"
 BALANCE="${NNSLR_BRAIN_BALANCE-0}"
+STAND="${NNSLR_BRAIN_STAND-0}"
 INIT_FROM="${NNSLR_BRAIN_INIT_FROM:-}"
 SIGN_CUTTER="${NNSLR_BRAIN_CUTTER:-}"
 SIGN_CLASSIFIER="${NNSLR_BRAIN_CLASSIFIER:-}"
@@ -171,7 +174,7 @@ if [[ "$NUMBER_PATH" != "bell" && "$NUMBER_PATH" != "class" ]]; then
   exit 2
 fi
 
-for setting in PICTURE BALANCE; do
+for setting in PICTURE BALANCE STAND; do
   if [[ "${!setting}" != "0" && "${!setting}" != "1" ]]; then
     echo "error: NNSLR_BRAIN_$setting must be 0 or 1: ${!setting}" >&2
     exit 2
@@ -265,6 +268,7 @@ fi
 # Always said, so that the log of a run names its number path (the panel's chip reads it there).
 [[ "$PICTURE" == "0" ]] && SETTINGS+=(--no-picture)
 [[ "$BALANCE" == "1" ]] && SETTINGS+=(--balance)
+[[ "$STAND" == "1" ]] && SETTINGS+=(--stand)
 SETTINGS+=(--keep "$KEEP")
 SETTINGS+=(--number-path "$NUMBER_PATH")
 if [[ -n "$INIT_FROM" ]]; then
@@ -280,6 +284,7 @@ echo "number path:  $([[ "$NUMBER_PATH" == "bell" ]] && echo "bell (a bell aroun
 echo "picture:      $([[ "$PICTURE" == "1" ]] && echo with || echo without)"
 echo "keep:         $KEEP"
 echo "balance:      $([[ "$BALANCE" == "1" ]] && echo "by situation" || echo off)"
+echo "stand still:  $([[ "$STAND" == "1" ]] && echo "on (0 km/h where the car stood, classes 0..200)" || echo off)"
 if [[ -n "$ROUTES_FROM" ]]; then
   echo "drives:       the same as $ROUTES_FROM"
 else

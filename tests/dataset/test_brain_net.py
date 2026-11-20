@@ -937,3 +937,82 @@ def test_the_bell_of_the_number_path_keeps_its_own_width(monkeypatch):
     assert before.tolist()[71] == pytest.approx(-18.0) and before.tolist()[119] == pytest.approx(-18.0)
     monkeypatch.setattr(brain_net, 'SPEED_SIGMA_KPH', 3.0)
     assert torch.equal(bell(), before)
+
+
+# A brain trained to stand (#117 step B, Train › Brain's "Stand still"): classes 0..200, his 0 an answer of its own.
+
+def test_the_table_of_a_brain_trained_to_stand_starts_at_0_and_no_other_table_does():
+    from nnslr_tools.brain_net import stand_table, stands, training_table
+    assert stand_table() == [0.0, *training_table()] and len(stand_table()) == 201
+    assert stands(stand_table()) and not stands(training_table()) and not stands(None)
+    assert not stands(list(range(5, 205, 5)))
+    model = net(kph=stand_table())
+    assert stands(model.class_kph) and model.speed_head.out_features == 201
+
+
+def test_on_every_table_without_0_the_answer_is_the_bell_it_was_to_the_last_bit():
+    """Stand still off is arm A: the masks of the stand table leave its targets exactly as before."""
+    from nnslr_tools.brain_net import SPEED_SIGMA_KPH, speed_targets, training_table
+    for table in (torch.tensor(training_table()), torch.arange(5, 205, 5, dtype=torch.float32)):
+        speed = torch.arange(-1, len(table))
+        answer = table[speed.clamp(0, len(table) - 1)]
+        bell = torch.exp(-0.5 * ((table - answer[..., None]) / SPEED_SIGMA_KPH) ** 2)
+        assert torch.equal(speed_targets(speed, kph=table), bell / bell.sum(dim=-1, keepdim=True))
+
+
+def test_on_a_stand_table_his_0_is_class_0_alone_and_no_other_answer_puts_anything_there():
+    from nnslr_tools.brain_net import stand_table, speed_targets
+    table = torch.tensor(stand_table())
+    targets = speed_targets(torch.tensor([0, 1, 2, 3, 50, 200]), kph=table)
+    assert targets.shape == (6, 201) and targets.sum(dim=-1).tolist() == pytest.approx([1.0] * 6)
+    assert targets[0].tolist() == [1.0] + [0.0] * 200
+    assert targets[1:, 0].tolist() == [0.0] * 5
+    # 1 km/h is still a bell, cut at the table's 1 km/h end, not pulled towards standing.
+    assert int(targets[1].argmax()) == 1 and float(targets[1, 2]) > 0
+    # Away from 0 the bell is the one of the table without 0, a class further on.
+    without = speed_targets(torch.tensor([49, 199]))
+    assert torch.allclose(targets[4:, 1:], without, atol=1e-7)
+
+
+def test_a_stand_brain_learns_class_0_from_a_stop_and_nothing_from_a_stop_without_weight():
+    from nnslr_tools.brain_net import brain_loss, stand_table
+    model = net(kph=stand_table())
+    images, extra = batch(2)
+    speed_logits, _works, _state = model(images, extra)
+    stop = torch.zeros(1, 2, dtype=torch.long)
+    weighed = brain_loss(speed_logits, None, stop, torch.ones(1, 2), torch.zeros(1, 2), torch.zeros(1, 2),
+                         kph=model.class_kph)
+    assert float(weighed) == pytest.approx(float(-torch.log_softmax(speed_logits, dim=-1)[..., 0].mean()), rel=1e-5)
+    unweighed = brain_loss(speed_logits, None, stop, torch.zeros(1, 2), torch.zeros(1, 2), torch.zeros(1, 2),
+                           kph=model.class_kph)
+    assert float(unweighed) == 0.0
+
+
+@pytest.mark.parametrize('number_path', ['class', 'bell'])
+def test_the_number_in_force_never_reaches_class_0_of_a_stand_brain_and_lands_on_its_own_class(number_path):
+    from nnslr_tools.brain_net import NO_NUMBER_KPH, stand_table
+    model = net(kph=stand_table(), number_path=number_path)
+    assert model.number_kph[0] == NO_NUMBER_KPH and model.number_kph[1:].tolist() == model.class_kph[1:].tolist()
+    assert 'number_kph' not in model.state_dict()  # made from class_kph, never in a checkpoint
+    model = trusting(model, 3.0).eval()
+    with torch.no_grad():
+        for kph in (30, 60, 130):
+            speed = model(batch(2)[0], number_row(kph))[0][0, 0]
+            assert int(speed.argmax()) == kph  # class i is i km/h on a stand table
+        # A number 0 in force (the car's row all zeros but known) lands nowhere near "stand".
+        stopped = model(batch(2)[0], number_row(0))[0][0, 0]
+    if number_path == 'class':
+        assert stopped.abs().sum() == 0
+    else:
+        assert float(stopped[0]) == pytest.approx(3.0 * -18.0)
+
+
+def test_every_other_table_has_no_table_of_its_own_for_the_number():
+    assert net().number_kph is None and net(number_path='bell').number_kph is None
+    assert net(kph=list(range(5, 205, 5))).number_kph is None
+
+
+def test_a_stand_brain_has_no_heads_of_the_limit_ahead():
+    from nnslr_tools.brain_net import build_brain_net, stand_table
+    with pytest.raises(ValueError, match='stand'):
+        build_brain_net(GROUPS, pretrained=False, ahead=True, kph=stand_table())

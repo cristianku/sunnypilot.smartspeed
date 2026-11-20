@@ -1135,3 +1135,46 @@ def test_a_brain_inputs_or_vision_py_that_is_not_the_pushed_one_stops_publish_be
     done = send(car, '--signnet', 's1', FAKE_PUBLISH='new networks')
     assert done.returncode == 0, done.stdout + done.stderr
     assert f'moved: {SUBMODULE}' in done.stdout
+
+
+def test_a_brain_trained_to_stand_goes_on_the_car_only_when_the_pushed_brain_py_reads_its_0(tmp_path, monkeypatch):
+    """#117 step B: a brain whose table starts at 0 says "stand" with it; a comma whose brain.py does not know the
+    contract's zero_valid would take that 0 for "not sure" (and refuse a table with 0 in it). Publish refuses it until
+    the pushed speed-limits branch reads it; the replay still takes it, and a brain of 1..200 asks nothing."""
+    data = tmp_path / 'data'
+    servers_runs(data)
+    stand = {'stopped': 40, 'stopped_said_0': .9, 'moving': 300, 'moving_said_0': .01}
+    model_id = brain_run(data, 'b1', result={'groups': ['signs', 'standstill'], 'seed': 0, 'history': [{}],
+                                             'kph': {'from': 0, 'to': 200, 'step': 1}, 'stand': True,
+                                             'validation': {'stand': stand}, 'test': {'stand': stand}})
+    use_brain(data, model_id)
+    index = ModelIndex(RunsIndex(data))
+    entry = index.in_use('brain')[0]
+    assert entry['stand'] is True and entry['stand_measure'] == {'validation': stand, 'test': stand}
+    clone = tmp_path / 'sunnypilot'
+    monkeypatch.setenv(car_release.SUNNYPILOT_CLONE_ENV, str(clone))
+    assert not car_release.car_reads_stand()  # no clone at all: nothing says the car reads it
+    assert 'trained to say 0 km/h where the car stood' in car_release.brain_refused(index)
+    with pytest.raises(ValueError, match='Stand still'):
+        car_release.choose(data, 's1')
+    assert car_release.choose(data, 's1', brain_on_car=False)['brain']['id'] == model_id
+
+    def pushed(body):
+        reader = clone / car_release.CAR_BRAIN
+        reader.parent.mkdir(parents=True, exist_ok=True)
+        reader.write_text(body)
+        for command in (['init', '-q'], ['add', '-A'], ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'x'],
+                        ['update-ref', 'refs/remotes/' + car_release.CAR_BRANCH, 'HEAD']):
+            subprocess.run(['git', '-C', str(clone), *command], check=True)
+
+    pushed('self.kph = list(contract["output"]["kph"])\n')
+    assert 'Stand still' in car_release.brain_refused(index)
+    pushed('self.zero_valid = bool(contract["output"].get("zero_valid", False))\n')
+    assert car_release.brain_refused(index) == ''
+    assert car_release.choose(data, 's1')['brain']['id'] == model_id
+    # A brain of 1..200, of today or of before, asks nothing of the car's brain.py.
+    use_brain(data, brain_run(data, 'b2'))
+    monkeypatch.setenv(car_release.SUNNYPILOT_CLONE_ENV, str(tmp_path / 'none'))
+    assert car_release.brain_refused(index) == ''
+    assert index.in_use('brain')[0]['stand'] is False and index.in_use('brain')[0]['stand_measure'] is None
+

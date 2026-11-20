@@ -6,7 +6,8 @@
 // input (since 14 Nov 2026, #85: off unless turned on), its applicability head (since 15 Nov 2026, #89: whose road a
 // speed sign is of, learnt from the boxes of Sign review; the brain is then given every speed sign read), how the number in
 // force reaches the speed (since 16 Nov 2026, #104: as a bell around it, or on its class alone as every brain before, to
-// compare the two) and its drives: every
+// compare the two), whether it learns to stand (since 20 Nov 2026, #117 step B: Stand still, off unless turned on) and
+// its drives: every
 // dashcam drive, or the same as an earlier brain run (routes_from, its routes.json). The driver's
 // inputs (the gas, the brake and the car's speed) are gone since 10 Nov 2026: the brain trained with them followed his speed.
 // Its road users head (12 to 17 Nov 2026) is gone too: the crossings are kinds of road marked in Speed review.
@@ -23,6 +24,8 @@ export type BrainKeep = 'best' | 'last';
 export const PICTURE_OPTIONS: {key: OnOff; label: string}[] = [{key: 'on', label: 'With'}, {key: 'off', label: 'Without'}];
 export const KEEP_OPTIONS: {key: BrainKeep; label: string}[] = [{key: 'best', label: 'Best on validation'}, {key: 'last', label: 'Last epoch'}];
 export const BALANCE_OPTIONS: {key: OnOff; label: string}[] = [{key: 'off', label: 'Off'}, {key: 'on', label: 'By situation'}];
+/** Stand still (#117 step B): off, the table 1..200 of every brain before; on, 0..200 and 0 where the car stood. */
+export const STAND_OPTIONS: {key: OnOff; label: string}[] = [{key: 'off', label: 'Off'}, {key: 'on', label: 'On'}];
 export type BrainSeeds = 'all' | 'one';
 export const SEEDS_OPTIONS: {key: BrainSeeds; label: string}[] = [{key: 'one', label: 'One'}, {key: 'all', label: 'Three'}];
 
@@ -36,6 +39,8 @@ export function useBrainChoices() {
   const picture = ref<OnOff>('on');
   const keep = ref<BrainKeep>('best');
   const balance = ref<OnOff>('off');
+  /** Stand still (#117 step B, 20 Nov 2026): off unless turned on; off is arm A, the brains of before. */
+  const stand = ref<OnOff>('off');
   const seeds = ref<BrainSeeds>('one');
   /** The map's limit the comma had as one more input of the brain (#85, 14 Nov 2026): off unless turned on, the one
    * choice here that is an input and not a head. */
@@ -50,6 +55,7 @@ export function useBrainChoices() {
   const option = computed((): ActionOptions => ({works: works.value, road: road.value, types: types.value,
     pool: pool.value, number_path: numberPath.value, applicability: applicability.value,
     picture: picture.value, keep: keep.value, balance: balance.value,
+    ...(stand.value === 'on' ? {stand: 'on' as const} : {}),
     ...(map.value === 'on' ? {map: 'on' as const} : {}),
     ...(seeds.value === 'one' ? {seeds: 'one' as const} : {}),
     ...(routesFrom.value ? {routes_from: routesFrom.value} : {})}));
@@ -63,7 +69,8 @@ export function useBrainChoices() {
     + (picture.value === 'off' ? ', without the picture' : pool.value === 'mean' ? ', with the picture as a mean' : '')
     + (numberPath.value === 'class' ? ', with the number on its class alone' : '')
     + (keep.value === 'last' ? ', keeping the last epoch' : '')
-    + (balance.value === 'on' ? ', balanced by situation' : ''));
+    + (balance.value === 'on' ? ', balanced by situation' : '')
+    + (stand.value === 'on' ? ', learning to stand (0 km/h where the car stood)' : ''));
   /** What Mean and Grid are, on the picture's choice. */
   const note = 'Grid keeps where things are in the picture, Mean only what is in it.';
   /** What Bell and Class are, on the number's choice. */
@@ -73,7 +80,11 @@ export function useBrainChoices() {
   const seedsNote = 'Seed 0 alone, or three networks that differ only by chance, to compare in Models, in three times the time.';
   /** What Drives is, on its choice. */
   const drivesNote = 'Whole dashcam drives and reviewed intervention intervals, or only the drives an earlier run used.';
-  return reactive({works, road, types, pool, numberPath, picture, keep, balance, seeds, map, applicability, routesFrom, option, words, note,
-    numberNote, seedsNote, drivesNote});
+  /** What Stand still is, on its choice. */
+  const standNote = 'On: the brain also says 0 km/h where the car stood, and learns it from your stops (classes 0 to 200). '
+    + 'Off: it learns only while moving, as every brain before. The car shows such a brain’s status in shadow mode; '
+    + 'Publish refuses it until the car’s code reads that 0.';
+  return reactive({works, road, types, pool, numberPath, picture, keep, balance, stand, seeds, map, applicability, routesFrom, option, words,
+    note, numberNote, seedsNote, drivesNote, standNote});
 }
 export type BrainChoice = ReturnType<typeof useBrainChoices>;

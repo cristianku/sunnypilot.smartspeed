@@ -745,6 +745,7 @@ def run_training(torch, tmp_path, monkeypatch, scores, change=lambda _drive: Non
     """Every epoch's validation scores what scores says: nothing may follow from it. training: more options of
     train_brain."""
     from nnslr_tools import brain_train
+    from nnslr_tools.brain_net import stand_table
     drive = fake_drive(['train'] * 4 + ['validation'] * 2 + ['test'] * 2)
     change(drive)
     drive['reader'], drive['reader_current'], drive['signs_read'] = {'vision': 'abc'}, True, True
@@ -756,7 +757,8 @@ def run_training(torch, tmp_path, monkeypatch, scores, change=lambda _drive: Non
     monkeypatch.setattr(brain_train, 'read_split', lambda _root: {'sha256': 'split'})
     monkeypatch.setattr(brain_train, '_pictures', lambda *_args, **_options: {drive['route']: pictures(drive)})
     # The network of the number path the training asks for (the bell unless number_path says the class, #104).
-    model = tiny(torch, groups=brain_train.learned_inputs(map_limit), number_path=training.get('number_path', 'bell'))
+    model = tiny(torch, groups=brain_train.learned_inputs(map_limit), number_path=training.get('number_path', 'bell'),
+                 **({'kph': stand_table()} if training.get('stand') else {}))
 
     def build(*_args, **options):
         BUILT[:] = [options]
@@ -765,8 +767,8 @@ def run_training(torch, tmp_path, monkeypatch, scores, change=lambda _drive: Non
     monkeypatch.setattr(brain_train, 'build_brain_net', build)
     real, left = brain_train.measure, list(scores)
 
-    def scripted(drives, answers, partition):
-        found = real(drives, answers, partition)
+    def scripted(drives, answers, partition, *more, **options):
+        found = real(drives, answers, partition, *more, **options)
         if partition == 'validation' and left:
             found['speed']['mean_error_kph'] = left.pop(0)
         return found
@@ -1603,9 +1605,9 @@ def test_a_brain_of_today_going_on_from_the_one_of_11_nov_drops_its_sign_distanc
     new = tiny(torch, groups=LEARNED_INPUTS, road_kinds=1)
     start = brain_start(torch, new, path, source_of(LEARNED_INPUTS))
     assert start['fresh'] == [] and start['inputs_left_out'] == ['hour', 'country', 'sign_distance']
-    assert start['inputs_added'] == ['road_signs', 'light_boxes', 'country_iso', 'hour_tz', 'sign_slots']
+    assert start['inputs_added'] == ['road_signs', 'light_boxes', 'country_iso', 'hour_tz', 'sign_slots', 'standstill']
     drive = fake_drive(['train'] * T)
-    for name in ('signs', 'lead', 'motion', 'road_signs', 'sign_slots'):
+    for name in ('signs', 'lead', 'motion', 'road_signs', 'sign_slots', 'standstill'):
         drive['inputs'][name][:] = numpy_random(drive['inputs'][name].shape)
     array = pictures(drive)
     for got, wanted in zip(said_by(torch, new, LEARNED_INPUTS, drive, array), said_by(torch, old, theirs, drive, array)):
@@ -1717,3 +1719,55 @@ def test_the_trust_in_the_maps_limit_of_the_other_path_starts_again(tmp_path):
     again = tiny(torch, road_kinds=1, groups=groups, map_path=True)
     start = brain_start(torch, again, path, source_of(groups))
     assert torch.equal(again.trust_map.weight, old.trust_map.weight) and float(again.trust_map.bias) == 3.0
+
+
+
+# Stand still (#117 step B): a brain whose table starts at 0, taught by the seconds he stood with a picture.
+
+def stood(drive, at=(0, 1, 4, 6)):
+    """His dashboard 0 on these frames (brain_targets.drive_targets: STOPPED, no class, no weight of today's), a stop to
+    learn for a brain trained to stand."""
+    import numpy
+    drive['speed'][list(at)], drive['speed_weight'][list(at)] = -1, 0
+    drive['stand_weight'] = numpy.zeros(len(drive['partitions']), dtype=numpy.float32)
+    drive['stand_weight'][list(at)] = 1
+
+
+def test_a_brain_trained_to_stand_is_built_on_0_to_200_and_learns_and_is_measured_on_his_stops(tmp_path, monkeypatch):
+    torch = torch_or_skip()
+    from nnslr_tools.brain_export import load_brain
+    from nnslr_tools.brain_net import stand_table
+    result, saved, _model = run_training(torch, tmp_path, monkeypatch, [1.0], change=stood, stand=True)
+    assert BUILT[0]['kph'] == stand_table() and saved['stand'] is True and result['stand'] is True
+    assert result['kph'] == {'from': 0, 'to': 200, 'step': 1}
+    assert load_brain(tmp_path / 'run' / 'brain-last.pt')[0].class_kph[0] == 0
+    # Measured on its stops and on the moving frames, by partition: validation has one stop, test one.
+    for part, stops, moving in (('validation', 1, 1), ('test', 1, 1)):
+        found = result[part]['stand']
+        assert (found['stopped'], found['moving']) == (stops, moving)
+        assert found['stopped_said_0'] in (0.0, 1.0) and found['moving_said_0'] in (0.0, 1.0)
+    # The speed's measure stays on the moving frames alone.
+    assert result['validation']['speed']['frames'] == 1
+
+
+def test_a_brain_of_today_is_built_on_1_to_200_and_has_no_stand_measure(tmp_path, monkeypatch):
+    torch = torch_or_skip()
+    result, saved, _model = run_training(torch, tmp_path, monkeypatch, [1.0], change=stood)
+    assert BUILT[0]['kph'] is None and saved['stand'] is False and result['stand'] is False
+    assert result['kph']['from'] == 1 and 'stand' not in result['validation']
+
+
+def test_stand_still_with_no_stop_in_train_is_refused_before_anything_is_trained(tmp_path, monkeypatch):
+    torch = torch_or_skip()
+    with pytest.raises(ValueError, match='Stand still is on'):
+        run_training(torch, tmp_path, monkeypatch, [1.0], stand=True)
+    assert not (tmp_path / 'run' / 'brain-last.pt').exists()
+
+
+def test_the_measure_of_a_stand_brain_counts_its_0_on_stops_and_on_moving_frames():
+    from nnslr_tools.brain_train import measure
+    drive = fake_drive(['test'] * 6)
+    stood(drive, at=(0, 1))
+    found = measure([drive], [said([0, 30, 0, 100, 100, 100])], 'test', stand=True)['stand']
+    assert found == {'stopped': 2, 'stopped_said_0': 0.5, 'moving': 4, 'moving_said_0': 0.25}
+    assert 'stand' not in measure([drive], [said([0, 30, 0, 100, 100, 100])], 'test')

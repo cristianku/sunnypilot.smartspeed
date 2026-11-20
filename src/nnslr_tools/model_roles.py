@@ -545,6 +545,11 @@ def brain_digest(result: Any) -> dict:
             # also every brain of before 16 Nov 2026, whose result does not say.
             'number_path': 'bell' if result.get('number_path') == 'bell' else 'class',
             'picture': result.get('picture') is not False, 'balance': result.get('balance') is True,
+            # Trained to say 0 km/h where the car stood (Stand still, #117 step B): its table starts at 0; and how it
+            # did there (brain_train._stand_measure), None for every other brain.
+            'stand': _int(kph.get('from')) == 0,
+            'stand_measure': {part: _dig(result, (part, 'stand')) for part in ('validation', 'test')}
+            if _int(kph.get('from')) == 0 else None,
             'keep': result.get('keep'),
             'kept': result.get('kept'),
             'road_kinds': list(result.get('road_kinds') or []), 'road_types': list(result.get('road_types') or []),
@@ -663,6 +668,12 @@ def takes_every_box(entry: dict) -> bool:
     """Whether a brain of the index was trained with the boxes of every sign read, those the applicability network gives
     to another road too (it learns whose road a sign is of, #89): the car must give it the same."""
     return bool((entry.get('applicability') or {}).get('other_road_boxes'))
+
+
+def stands_still(entry: dict) -> bool:
+    """Whether a brain of the index was trained to say 0 km/h where the car stood (Train › Brain's switch "Stand still",
+    #117 step B): its table starts at 0, and the car must read that 0 as "stand", not as today's "not sure"."""
+    return (entry.get('kph') or {}).get('from') == 0
 
 
 def _active_entry(role: str, value: Any) -> dict | None:
@@ -1100,7 +1111,7 @@ class ModelIndex:
                       **{key: trained.get(key) for key in ('rate_hz', 'ahead', 'hidden', 'kph', 'road_kinds', 'road_types',
                                                            'pool', 'sign_networks', 'applicability',
                                                             'road_sign_kinds', 'number_path', 'picture', 'balance', 'keep',
-                                                            'kept')},
+                                                            'kept', 'stand', 'stand_measure')},
                       'epochs': trained.get('epochs'), 'epochs_run': trained.get('epochs'),
                       'validation': trained.get('validation'), 'test': trained.get('test'),
                        'test_no_map': trained.get('test_no_map'), 'situation': trained.get('situation'),

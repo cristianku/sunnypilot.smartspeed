@@ -124,16 +124,19 @@ def test_the_usual_training_keeps_the_roadworks_and_the_kinds_of_road_and_leaves
     # The road types are on: only the seconds with one go into the training.
     assert '--no-road-types' not in log
     assert '--driver' not in log
+    # Stand still is off: the table 1..200 of before.
+    assert '--stand' not in log and 'stand still:  off' in log
 
 
 def test_situation_options_reach_the_check_and_every_seed(tmp_path):
-    opts = {'NNSLR_BRAIN_PICTURE': '0', 'NNSLR_BRAIN_KEEP': 'last', 'NNSLR_BRAIN_BALANCE': '1'}
+    opts = {'NNSLR_BRAIN_PICTURE': '0', 'NNSLR_BRAIN_KEEP': 'last', 'NNSLR_BRAIN_BALANCE': '1', 'NNSLR_BRAIN_STAND': '1'}
     process = run_script(tmp_path, env=opts)
     assert process.returncode == 0, process.stderr + process.stdout
     log = (tmp_path / 'data' / 'runs' / 'n1' / 'brain.log').read_text()
     trainings = [line for line in log.splitlines() if line.startswith('args: train-brain')]
     assert len(trainings) == 4
-    assert all('--no-picture --balance --keep last' in line for line in trainings)
+    assert all('--no-picture --balance --stand --keep last' in line for line in trainings)
+    assert 'stand still:  on' in log
     for key in opts:
         process = run_script(tmp_path, name='invalid', env={key: ''})
         assert process.returncode == 2 and key in process.stderr

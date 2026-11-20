@@ -70,6 +70,7 @@ def brain_script(checkout):
                       'echo "applicability: ${NNSLR_BRAIN_APPLICABILITY-unset}"\n'
                       'echo "number path: ${NNSLR_BRAIN_NUMBER_PATH-unset}"\n'
                       'echo "situation options: $NNSLR_BRAIN_PICTURE $NNSLR_BRAIN_KEEP $NNSLR_BRAIN_BALANCE"\n'
+                      'echo "stand still: ${NNSLR_BRAIN_STAND-unset}"\n'
                       'echo "routes from: ${NNSLR_BRAIN_ROUTES_FROM-unset}"\n')
     script.chmod(0o755)
     return script
@@ -417,7 +418,7 @@ def test_situation_options_reach_train_and_pipeline_and_are_never_dropped(root, 
     server = RunningServer(root)
     panel = server.app.panel = Panel(root, repo=checkout)
     panel.activities = list
-    choices = {'picture': 'off', 'keep': 'last', 'balance': 'on'}
+    choices = {'picture': 'off', 'keep': 'last', 'balance': 'on', 'stand': 'on'}
     try:
         for key in choices:
             for wrong in (None, True, 1, [], {}, '', 'invalid'):
@@ -429,9 +430,11 @@ def test_situation_options_reach_train_and_pipeline_and_are_never_dropped(root, 
         job = json_of(data)['id']
         finished(panel, job)
         assert 'situation options: 0 last 1' in full_log(panel, job)
+        assert 'stand still: 1' in full_log(panel, job)
         assert {key: panel._brain_choices({})[key] for key in
-                ('NNSLR_BRAIN_PICTURE', 'NNSLR_BRAIN_KEEP', 'NNSLR_BRAIN_BALANCE')} == {
-                    'NNSLR_BRAIN_PICTURE': '1', 'NNSLR_BRAIN_KEEP': 'best', 'NNSLR_BRAIN_BALANCE': '0'}
+                ('NNSLR_BRAIN_PICTURE', 'NNSLR_BRAIN_KEEP', 'NNSLR_BRAIN_BALANCE', 'NNSLR_BRAIN_STAND')} == {
+                    'NNSLR_BRAIN_PICTURE': '1', 'NNSLR_BRAIN_KEEP': 'best', 'NNSLR_BRAIN_BALANCE': '0',
+                    'NNSLR_BRAIN_STAND': '0'}
         pipeline_panel = Panel(root / 'pipeline-case', repo=checkout)
         scanned(pipeline_panel.root)
         monkeypatch.setattr(pipeline_panel, 'activities', list)
@@ -440,9 +443,10 @@ def test_situation_options_reach_train_and_pipeline_and_are_never_dropped(root, 
         job = pipeline['steps'][0]['job']
         finished(pipeline_panel, job)
         assert 'situation options: 0 last 1' in full_log(pipeline_panel, job)
+        assert 'stand still: 1' in full_log(pipeline_panel, job)
         with pytest.raises(PanelError, match='options of a training are strings'):
             pipeline_panel.start_pipeline({'steps': [{'action': 'train_brain', 'options': {'keep': None}}]}, 'admin')
-        with pytest.raises(PanelError, match='Picture and balance'):
+        with pytest.raises(PanelError, match='Picture, balance and Stand still'):
             pipeline_panel.start_pipeline({'steps': [{'action': 'train_brain', 'options': {'keep': 'invalid'}}]}, 'admin')
     finally:
         server.close()

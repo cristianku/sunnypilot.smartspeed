@@ -67,7 +67,8 @@ function question(name: ActionName, state: ActionState, start: TrainingStart | n
       + (options?.number_path === 'class' ? ' With the number on its class alone, as the brains before.' : '')
       + (options?.picture === 'off' ? ' Without the picture, for offline comparison.' : '')
       + (options?.keep === 'last' ? ' Keeps the last epoch.' : '')
-      + (options?.balance === 'on' ? ' Balances the speed loss by situation.' : '');
+      + (options?.balance === 'on' ? ' Balances the speed loss by situation.' : '')
+      + (options?.stand === 'on' ? ' Learns to stand: 0 km/h where the car stood (Publish refuses it until the car reads that 0).' : '');
     return {title: 'Train the brain?', action: 'Start training',
       text: 'First it reads the signs of every drive with sunnypilot off and its logs read as the car does today, then it trains '
         + (options?.seeds === 'one' ? 'seed 0 on the GPU: about 5 minutes. One new version in Models; '

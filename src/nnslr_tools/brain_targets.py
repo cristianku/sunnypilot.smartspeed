@@ -1197,7 +1197,9 @@ def drive_targets(root: Path, route: str, labels: dict, merged: dict, split: dic
     return {'route': route, 'rate': rate, 'frames': frames, 'ns': ns, 'partitions': partitions,
             'own_kph': np.array([np.nan if kph is None else kph for kph in own], dtype=np.float32),
             'cells': cells, 'cuts': memory_cuts(ns) | cuts, 'speed': speed, 'speed_out': speed_out,
-            'speed_weight': (speed_out == 0).astype(np.float32), 'blocks': blocks, 'blocked': blocked,
+            'speed_weight': (speed_out == 0).astype(np.float32),
+            'stand_weight': ((speed_out == STOPPED) & (typed | (not types))).astype(np.float32),
+            'blocks': blocks, 'blocked': blocked,
             'works': works, 'works_weight': works_weight, 'road': road, 'road_weight': road_weight, 'road_kinds': list(kinds),
             'road_type': road_type, 'type_weight': (typed & usable).astype(np.float32), 'typed_by_person': typed_by_person,
             'types': types,
@@ -1318,6 +1320,17 @@ def loss_weights(drive: dict, partition: str) -> tuple[np.ndarray, np.ndarray]:
     """(speed weight, works weight) of a drive in one partition: the rest of the drive still runs through the memory."""
     inside = np.array([name == partition for name in drive['partitions']], dtype=np.float32)
     return drive['speed_weight'] * inside, drive['works_weight'] * inside
+
+
+def stand_answers(drive: dict, partition: str) -> tuple[np.ndarray, np.ndarray]:
+    """For a brain trained to stand (#117 step B), whose class 0 is 0 km/h (brain_net.stand_table): (the class of each
+    frame in that table, the stopped frames of one partition with their weight, stand_weight). A stopped frame answers
+    class 0, every other answer moves one class up, and -1 stays without one. drive['speed'] stays in today's table, as
+    every measure, copy and swap reads it."""
+    inside = np.array([name == partition for name in drive['partitions']], dtype=np.float32)
+    stopped = drive['stand_weight'] * inside if 'stand_weight' in drive else np.zeros(len(inside), dtype=np.float32)
+    speed = np.where(stopped > 0, 0, np.where(drive['speed'] >= 0, drive['speed'] + 1, -1)).astype(np.int64)
+    return speed, stopped
 
 
 def road_weights(drive: dict, partition: str) -> np.ndarray | None:
@@ -1458,6 +1471,8 @@ def night_copy(drive: dict, groups: tuple[str, ...], rng) -> dict | None:
     answered = frames & _inside((clock + hours) % 24, window)
     copy = {**_with_hour(drive, groups, hours), 'speed': np.where(answered, number, drive['speed']),
             'speed_weight': answered.astype(np.float32), 'works_weight': np.zeros_like(drive['works_weight'])}
+    if 'stand_weight' in drive:
+        copy['stand_weight'] = np.zeros_like(drive['stand_weight'])
     if 'road_weight' in drive:
         copy['road_weight'] = np.zeros_like(drive['road_weight'])
     if 'type_weight' in drive:
@@ -1611,6 +1626,8 @@ def _per_second(drive: dict) -> dict:
     found = {'frames': [frame for frame, measured in zip(drive['frames'], kept) if measured],
              'speed_weight': drive['speed_weight'] * kept, 'works_weight': drive['works_weight'] * kept,
              'speed_out': np.where(kept, drive['speed_out'], -1)}
+    if 'stand_weight' in drive:
+        found['stand_weight'] = drive['stand_weight'] * kept
     if 'road_weight' in drive:
         found['road_weight'] = drive['road_weight'] * kept[:, None]
     if 'type_weight' in drive:
@@ -1631,7 +1648,7 @@ def summary(drives: list[dict]) -> dict:
         return {kind: {'in': int((weight[:, column] * road[:, column]).sum()),
                        'out': int((weight[:, column] * (1 - road[:, column])).sum())} for column, kind in enumerate(kinds)}
 
-    parts = {name: {'speed': 0, 'works_in': 0, 'works_out': 0, 'sites': 0,
+    parts = {name: {'speed': 0, 'stand': 0, 'works_in': 0, 'works_out': 0, 'sites': 0,
                     'road': {kind: {'in': 0, 'out': 0} for kind in kinds}, 'types': {kind: 0 for kind in ROAD_TYPES}}
              for name in ('train', 'validation', 'test', 'buffer')}
     rows = []
@@ -1641,6 +1658,7 @@ def summary(drives: list[dict]) -> dict:
         for name, part in parts.items():
             here = names == name
             part['speed'] += int(drive['speed_weight'][here].sum())
+            part['stand'] += int(drive['stand_weight'][here].sum()) if 'stand_weight' in drive else 0
             part['works_in'] += int((drive['works_weight'][here] * drive['works'][here]).sum())
             part['works_out'] += int((drive['works_weight'][here] * (1 - drive['works'][here])).sum())
             for kind, count in road_of(drive, here).items():
@@ -1654,6 +1672,7 @@ def summary(drives: list[dict]) -> dict:
             if len(inside):
                 parts[names[inside[len(inside) // 2]]]['sites'] += 1
         rows.append({'route': drive['route'], 'frames': len(drive['frames']), 'speed': int(drive['speed_weight'].sum()),
+                     'stand': int(drive['stand_weight'].sum()) if 'stand_weight' in drive else 0,
                      'out': {name: int((drive['speed_out'] == reason).sum()) for reason, name in OUT_REASONS.items()},
                      'works_in': int((drive['works_weight'] * drive['works']).sum()),
                      'works_out': int((drive['works_weight'] * (1 - drive['works'])).sum()), 'marks': len(drive['marks']),
@@ -1670,9 +1689,10 @@ def summary(drives: list[dict]) -> dict:
 
 def summary_text(found: dict) -> str:
     lines = ['Per partition (frames, one a second):',
-             f"  {'':<11}{'speed':>7}{'works in':>10}{'works out':>11}{'sites':>7}"]
+             f"  {'':<11}{'speed':>7}{'stopped':>9}{'works in':>10}{'works out':>11}{'sites':>7}"]
     for name, part in found['partitions'].items():
-        lines.append(f"  {name:<11}{part['speed']:>7}{part['works_in']:>10}{part['works_out']:>11}{part['sites']:>7}")
+        lines.append(f"  {name:<11}{part['speed']:>7}{part.get('stand', 0):>9}{part['works_in']:>10}{part['works_out']:>11}"
+                     f"{part['sites']:>7}")
     for kind in found.get('road_kinds', []):
         lines.append(f"  {kind}: " + ', '.join(f"{name} {part['road'][kind]['in']} in, {part['road'][kind]['out']} out"
                                                for name, part in found['partitions'].items()))

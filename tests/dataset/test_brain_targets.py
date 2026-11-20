@@ -1623,3 +1623,49 @@ def test_the_answers_of_whose_road_count_by_partition_and_a_night_copy_has_none(
     copy = targets.night_copy({**plated(), 'applicability_weight': numpy.ones((3, 8), dtype=numpy.float32)}, GROUPS,
                               __import__('random').Random(0))
     assert copy is not None and not copy['applicability_weight'].any()
+
+
+# Stand still (#117 step B): the seconds he stood with a picture are answers of a brain trained to stand.
+
+def test_a_second_he_stood_with_a_picture_is_a_stop_to_learn_and_the_speed_of_today_stays(tmp_path, monkeypatch):
+    targets = _targets()
+    monkeypatch.setattr(targets, 'frame_country', lambda _latitude, _longitude, root: 'CH')
+    write_drive(tmp_path, ROUTE, [(0, i) for i in range(12)])
+    (tmp_path / 'derived' / 'frames' / ROUTE / '0' / 'frame_00000003.png').unlink()
+    label_db(tmp_path, works=[(ROUTE, 0, NS)])
+    # Standing until 6 s: below DASH_MIN_KPH the dashboard says 0, without the Peugeot's offset (drive_logs.dashboard_speed).
+    merged = {'frames': encoded(12), 'series': {'v_ego': [[0, 0.0], [6 * NS, 47.0]]},
+              'meta': {'car': {'fingerprint': 'PSA_PEUGEOT_3008'}}, 'span': [0, 12 * NS],
+              'gps': [[1 * NS, 47.0, 8.0, 1_750_000_000_000]]}
+    split = {'cells': {}, 'partitions': {}, 'frame_keys': {}}
+    drive = targets.drive_targets(tmp_path, ROUTE, targets.read_labels(tmp_path)[ROUTE], merged, split)
+    stood = [second for second in range(12) if drive['speed_out'][second] == targets.STOPPED]
+    assert stood and max(stood) < 6 and 3 not in stood
+    # The second without a picture answers nothing, as before.
+    assert drive['speed_out'][3] == targets.NO_FRAME and drive['stand_weight'][3] == 0
+    assert [int(value) for value in drive['stand_weight']] == [int(second in stood) for second in range(12)]
+    # Nothing of today's answers changes: a stop has no class and no weight in drive['speed'].
+    assert all(drive['speed'][second] == -1 and drive['speed_weight'][second] == 0 for second in stood)
+    found = targets.summary([drive])
+    assert found['drives'][0]['stand'] == len(stood) and found['partitions']['buffer']['stand'] == len(stood)
+    assert 'stopped' in targets.summary_text(found)
+
+
+def test_the_answers_of_a_stand_brain_are_0_where_he_stood_and_a_class_further_on_elsewhere():
+    np, targets = _np(), _targets()
+    drive = {'partitions': ['train', 'train', 'train', 'validation', 'train'],
+             'speed': np.array([-1, 49, -1, -1, 0]), 'stand_weight': np.array([1, 0, 0, 1, 0], dtype=np.float32)}
+    speed, stopped = targets.stand_answers(drive, 'train')
+    assert speed.tolist() == [0, 50, -1, -1, 1] and stopped.tolist() == [1, 0, 0, 0, 0]
+    speed, stopped = targets.stand_answers(drive, 'validation')
+    assert speed.tolist() == [-1, 50, -1, 0, 1] and stopped.tolist() == [0, 0, 0, 1, 0]
+    # A drive of before (no stand_weight) has no stop to learn.
+    speed, stopped = targets.stand_answers({k: v for k, v in drive.items() if k != 'stand_weight'}, 'train')
+    assert speed.tolist() == [-1, 50, -1, -1, 1] and not stopped.any()
+
+
+def test_a_night_copy_has_no_stop_to_learn():
+    np, targets = _np(), _targets()
+    copy = targets.night_copy({**plated(), 'stand_weight': np.ones(3, dtype=np.float32)}, GROUPS,
+                              __import__('random').Random(0))
+    assert copy is not None and not copy['stand_weight'].any()

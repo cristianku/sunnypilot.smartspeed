@@ -63,7 +63,8 @@ export const BRAIN_GROUPS: BrainGroup[] = [
 
 /** What it says on the car (the head the car's network keeps): the speed to hold and nothing else, since 12 Nov 2026. */
 export const BRAIN_OUTPUTS: BrainFact[] = [
-  {name: 'speed = speed_head(h) + trust(h) · number', what: 'the speed to hold, a class from 1 to 200 km/h; number is the limit confirmed of signs, '
+  {name: 'speed = speed_head(h) + trust(h) · number', what: 'the speed to hold, a class from 1 to 200 km/h (0 to 200 with Stand still, '
+    + '#117: 0 is “stand”); number is the limit confirmed of signs, '
     + 'as a bell around it (Number: Bell) or on its class alone (Class, every brain before 16 Nov 2026)'},
 ];
 
@@ -81,10 +82,11 @@ export const BRAIN_ANSWERS: BrainFact[] = [
 /** The seconds that answer nothing (brain_targets.OUT_REASONS): they still go through the memory, as on the car. */
 export const BRAIN_OUT: BrainFact[] = [
   {name: 'no_speed', what: 'the logs have no speed'},
-  {name: 'stopped', what: 'below 1 km/h'},
+  {name: 'stopped', what: 'below 1 km/h: with Stand still on, the seconds you stood with a picture answer 0 instead'},
   {name: 'cruise', what: 'openpilot or the car’s cruise held the speed (never on a dashcam drive)'},
   {name: 'left_out', what: 'a block of yours with no speed'},
   {name: 'boundary', what: '2 s around the jump at the edge of a block'},
   {name: 'no_frame', what: 'no picture'},
   {name: 'no_road_type', what: 'no road type, with Road type (map) on'},
+  {name: 'outside_review', what: 'on a drive with interventions (#118): outside the stretches you reviewed, only the memory reads it'},
 ];
