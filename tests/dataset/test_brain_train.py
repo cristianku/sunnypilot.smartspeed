@@ -1627,6 +1627,26 @@ def test_the_speeds_go_on_by_km_h_and_a_speed_the_start_lacks_starts_fresh(tmp_p
     assert new.class_kph.tolist() == [20, 30, 40]
 
 
+def test_stand_still_goes_on_from_a_brain_of_before_by_km_h_and_back(tmp_path):
+    """Start from with Stand still (#117 step B): the rows of the speed head go by km/h, never by index, so a stand brain
+    from a brain of 1..200 has the class 0 alone fresh, and a brain of 1..200 from a stand brain leaves its 0 out."""
+    from nnslr_tools.brain_net import stand_table, training_table
+    from nnslr_tools.brain_train import brain_start
+    torch = torch_or_skip()
+    before = tiny(torch, road_kinds=1)
+    stand = tiny(torch, kph=stand_table(), road_kinds=1)
+    start = brain_start(torch, stand, start_file(torch, tmp_path / 'before', before), source_of(GROUPS))
+    assert sorted(start['fresh']) == ['speed_head.bias (0)', 'speed_head.weight (0)']
+    assert torch.equal(stand.speed_head.weight[1:], before.state_dict()['speed_head.weight'])
+    assert torch.equal(stand.speed_head.bias[1:], before.state_dict()['speed_head.bias'])
+    assert stand.class_kph.tolist() == stand_table() and stand.number_kph[0] < 0
+    back = tiny(torch, road_kinds=1)
+    start = brain_start(torch, back, start_file(torch, tmp_path / 'stand', stand), source_of(GROUPS))
+    assert start['fresh'] == []
+    assert torch.equal(back.speed_head.weight, stand.state_dict()['speed_head.weight'][1:])
+    assert back.class_kph.tolist() == training_table()
+
+
 @pytest.mark.parametrize('changed,words', [({'pool': 'mean'}, 'stepped otherwise'), ({'rate_hz': 1.0}, 'stepped otherwise'),
                                            ({'split': 'c' * 64}, 'another split')])
 def test_a_start_stepped_otherwise_or_on_another_split_is_refused(tmp_path, changed, words):
