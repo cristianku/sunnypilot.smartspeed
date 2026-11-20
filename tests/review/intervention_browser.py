@@ -23,6 +23,9 @@ with sync_playwright() as p:
         page.set_viewport_size({'width': width, 'height': 960})
         for name in ('Speed', 'Signs', 'Interventions'):
             expect(sidebar.get_by_role('radio', name=name, exact=True)).to_be_visible()
+        assert sidebar.get_by_role('radio', name='Interventions', exact=True).evaluate(
+            '''el => { const r = document.createRange(); r.selectNodeContents(el);
+                       return r.getBoundingClientRect().right <= el.getBoundingClientRect().right; }''')
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
     sidebar.get_by_role('radio', name='Interventions', exact=True).click()
     expect(page.get_by_role('heading', name='Interventions on this drive')).to_be_visible()
