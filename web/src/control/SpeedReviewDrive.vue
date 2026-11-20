@@ -56,6 +56,8 @@ import SignEditorStage from '../review/SignEditorStage.vue';
 import {report as editReport, rowOf, state as editState} from '../review/store';
 import {clockOf, type ScanState, secondOf as frameSecondOf, type SyncSegment} from './drive-review';
 import DriveReviewDrive from './DriveReviewDrive.vue';
+import InterventionReview from './InterventionReview.vue';
+import {goTo, tabIntervention} from './tabs';
 import {networksText, PROPOSER_LABELS} from './proposer-words';
 import Segmented from './Segmented.vue';
 import {aiRuns, isAiFrame, isOtherRoad, isSpeedSign, lastRead, lightOf, type MarkRun, markRuns, nearestFrame, type OffRead, offReads, placeFrames, type SignFrames, signReads, signRuns,
@@ -588,9 +590,11 @@ const signOffset = computed(() => {
   return Math.abs(gap) < 0.05 ? 'this frame' : Math.abs(gap).toFixed(1) + ' s ' + (gap > 0 ? 'later' : 'earlier');
 });
 
-// The side: the speed (the card as it was) or the signs. Kept for the next drive in this browser.
+// Speed and Signs remember the last choice. The intervention queue belongs to this drive's URL.
 type Panel = 'speed' | 'signs';
-const PANELS: {key: Panel; label: string}[] = [{key: 'speed', label: 'Speed'}, {key: 'signs', label: 'Signs'}];
+type Side = Panel | 'interventions';
+const PANELS: {key: Side; label: string}[] = [{key: 'speed', label: 'Speed'}, {key: 'signs', label: 'Signs'}];
+if (!isGuest()) PANELS.push({key: 'interventions', label: 'Interventions'});
 const PANEL_KEY = 'speed-review-panel';
 function readPanel(): Panel {
   try {
@@ -600,16 +604,26 @@ function readPanel(): Panel {
   }
 }
 // A link of the signs opens the Signs side; a guest given only the signs has nothing else.
-const panel = ref<Panel>(!showSigns ? 'speed' : signsOnly || asked.side ? 'signs' : readPanel());
+const basePanel = ref<Panel>(!showSigns ? 'speed' : signsOnly || asked.side ? 'signs' : readPanel());
+const panel = computed<Side>({
+  get: () => tabIntervention.value === 'queue' ? 'interventions' : basePanel.value,
+  set: side => {
+    if (side === 'interventions') goTo('speedreview', '', props.route, 'queue');
+    else {
+      basePanel.value = side;
+      if (tabIntervention.value === 'queue') goTo('speedreview', '', props.route);
+    }
+  },
+});
 // A drive with Speed review off opens on its signs, without changing the side the next drive opens on.
 let speedOffSide = false;
 watch(speedOff, (off) => {
-  if (off && showSigns && panel.value !== 'signs') {
+  if (off && showSigns && panel.value === 'speed') {
     speedOffSide = true;
-    panel.value = 'signs';
+    basePanel.value = 'signs';
   }
 }, {immediate: true});
-watch(panel, (value) => {
+watch(basePanel, (value) => {
   if (speedOffSide) {
     speedOffSide = false;
     return;
@@ -763,6 +777,7 @@ watch(() => editState.saveCount, () => {
 onBeforeUnmount(() => window.clearTimeout(signsTimer));
 
 function onKey(event: KeyboardEvent): void {
+  if (panel.value === 'interventions') return;
   const target = event.target as HTMLElement | null;
   if (target?.closest('input, textarea, select, [contenteditable]') || event.metaKey || event.ctrlKey || event.altKey) return;
   // [ and ]: the AI frame before or after, on either side.
@@ -820,7 +835,7 @@ interface Drag {
   from: number; to: number; width: number; edges: number[]; ns: number; snapped: number | null; moved: boolean;
 }
 const dragging = shallowRef<Drag | null>(null);
-const canDrag = computed(() => !locked.value && !!drive.value?.span_ns);
+const canDrag = computed(() => panel.value !== 'interventions' && !locked.value && !!drive.value?.span_ns);
 /** The block whose end is at a time, the one before an edge two blocks share. */
 const endingAt = (ns: number): Block | null => blocks.value.find((other) => other.end_ns === ns) ?? null;
 function dragDown(event: PointerEvent, key: number, side: 'start' | 'end', from: number, to: number, width: number): void {
@@ -1008,7 +1023,7 @@ function worksIn(from: number, to: number) {
 <template>
   <DriveReviewDrive ref="player" class="sr-view" :class="{'sr-signs-on': showSigns && panel === 'signs'}" :route="route" :read-only="readOnly" tab="speedreview" :back-label="isGuest() ? 'My reviews' : 'Speed and sign review'" simple-lanes
                     :arrows="!(editing && onFrame)" :sharp-base="editing ? pictureBaseOf(route) + 'video/' : null"
-                    sharp :rates="RATES" start-zoom="ten" :car-kph="driverKph" :pick-map="!readOnly && !speedOff" @time="follow"
+                    sharp :rates="RATES" start-zoom="ten" :car-kph="driverKph" :pick-map="!readOnly && !speedOff && panel !== 'interventions'" @time="follow"
                     @pick-map="fromMap" @segments="(value) => { segments = value; }" @index="(value) => { videoIndex = value ?? null; }"
                     @frame="(value) => { presented = value; }" @scan="onScan">
     <template #badge><b v-if="drive?.dashcam" class="dashcam-badge">DASHCAM MODE</b>
@@ -1137,8 +1152,9 @@ function worksIn(from: number, to: number) {
     </template>
     <template #side>
       <section class="sr-card" aria-labelledby="sr-card-title">
-        <Segmented v-if="showSigns && !signsOnly" v-model="panel" :options="PANELS" label="The side: the speed or the signs" class="sr-panel"/>
-        <template v-if="panel === 'signs' && editing">
+        <Segmented v-if="showSigns && !signsOnly" v-model="panel" :options="PANELS" label="Drive review side" class="sr-panel"/>
+        <InterventionReview v-if="panel === 'interventions'" :drive-queue="route" :read-only="readOnly"/>
+        <template v-else-if="panel === 'signs' && editing">
           <h3 id="sr-card-title">The signs at {{ clockOf(seconds) }}</h3>
           <p v-if="alone" class="dr-hint" id="sr-editor-alone">{{ player?.videoGone ? 'The video of the drive cannot be shown'
             : 'The video of the drive has not this frame' }}: its own picture is on screen. ← → go on from frame to frame.</p>
@@ -1192,7 +1208,7 @@ function worksIn(from: number, to: number) {
         <template v-else-if="speedOff">
           <h3 id="sr-card-title">Speed review is off on this drive</h3>
           <p class="dr-hint" id="sr-not-learnt"><strong>sunnypilot was on in this drive.</strong>
-            Its dashboard speed is not a whole-drive training answer. <a v-if="!isGuest()" href="/speed-review?intervention=queue">Review manual interventions</a>
+            Its dashboard speed is not a whole-drive training answer. <button v-if="!isGuest()" type="button" class="link-button" @click="panel = 'interventions'">Review manual interventions</button>
             <template v-if="showSigns && !signsOnly"> or switch to Signs above</template>.</p>
         </template>
         <template v-else>

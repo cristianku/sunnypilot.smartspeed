@@ -75,16 +75,23 @@ function itemOf(path: string, search: string): string | null {
 export const tabDrive = ref<string | null>(driveOf(location.pathname, location.search));
 /** The sign opened in the drive shown, null for none. */
 const tabItem = ref<string | null>(itemOf(location.pathname, location.search));
+function driveScopeOf(path: string, search: string): boolean {
+  return tabOf(path) === 'speedreview' && !!driveOf(path, search) && !!itemOf(path, search)
+    && new URLSearchParams(search).get('scope') === 'drive';
+}
+/** A clip opened from the drive sidebar advances and returns within that drive, also after a reload. */
+export const driveInterventionScope = ref(driveScopeOf(location.pathname, location.search));
 /** The sign opened on Sign distance, null for none. */
 export const tabSign = computed(() => currentTab.value === 'signdistance' ? tabItem.value : null);
 export const tabIntervention = computed(() => currentTab.value === 'speedreview' && !isGuest() ? tabItem.value : null);
 
 /** The address of a tab, with its drive and the sign of that drive. */
-function addressOf(tab: ControlTab, drive: string | null, item: string | null): string {
+function addressOf(tab: ControlTab, drive: string | null, item: string | null, driveScope = false): string {
   const query = new URLSearchParams();
   if (drive !== null) query.set('drive', drive);
   const key = ITEM_KEY[tab];
   if ((drive !== null || tab === 'speedreview') && item !== null && key !== undefined) query.set(key, item);
+  if (driveScope) query.set('scope', 'drive');
   const search = query.toString();
   return TAB_PATH[tab] + (search ? '?' + search : '');
 }
@@ -101,17 +108,19 @@ function markCurrent(tab: ControlTab): void {
 
 /** Shows a tab and puts its address in the history; with a hash ("#dataset"), scrolls to it once the tab is drawn; with
  * a drive, that drive of Speed review, Sign distance or Models › Drive (and a sign of it on Sign distance). */
-export function goTo(wanted: ControlTab, hash = '', drive: string | null = null, item: string | null = null): void {
+export function goTo(wanted: ControlTab, hash = '', drive: string | null = null, item: string | null = null, driveScope = false): void {
   // A reviewer from outside has one list, their own.
   const tab = isGuest() && drive === null ? 'overview' : wanted;
   const nextItem = (drive === null && tab !== 'speedreview') || ITEM_KEY[tab] === undefined ? null : item;
-  if (tab === currentTab.value && !hash && drive === tabDrive.value && nextItem === tabItem.value) return;
+  const scoped = driveScope && tab === 'speedreview' && drive !== null && nextItem !== null;
+  if (tab === currentTab.value && !hash && drive === tabDrive.value && nextItem === tabItem.value && scoped === driveInterventionScope.value) return;
   // A drive opened from its list: its Back control goes back in the history, to the list as it was.
   const fromList = drive !== null && currentTab.value === tab && tabDrive.value === null;
   currentTab.value = tab;
   tabDrive.value = drive;
   tabItem.value = nextItem;
-  history.pushState({tab, fromList}, '', addressOf(tab, drive, nextItem) + hash);
+  driveInterventionScope.value = scoped;
+  history.pushState({tab, fromList}, '', addressOf(tab, drive, nextItem, scoped) + hash);
   markCurrent(tab);
   if (!hash) {
     window.scrollTo({top: 0});
@@ -143,7 +152,7 @@ export function useTabRouting(): void {
     const tab = tabOf(link.pathname);
     if (tab === null) return;
     event.preventDefault();
-    goTo(tab, link.hash, driveOf(link.pathname, link.search), itemOf(link.pathname, link.search));
+    goTo(tab, link.hash, driveOf(link.pathname, link.search), itemOf(link.pathname, link.search), driveScopeOf(link.pathname, link.search));
   }
   function onPop(): void {
     const tab = tabOf(location.pathname);
@@ -151,6 +160,7 @@ export function useTabRouting(): void {
     currentTab.value = tab;
     tabDrive.value = driveOf(location.pathname, location.search);
     tabItem.value = itemOf(location.pathname, location.search);
+    driveInterventionScope.value = driveScopeOf(location.pathname, location.search);
     markCurrent(tab);
   }
   onMounted(() => {

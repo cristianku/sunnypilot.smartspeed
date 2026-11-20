@@ -1724,7 +1724,11 @@ def make_handler(app: ReviewApp):
             drive = r'/api/speed-review/drives/([0-9a-f]{8}--[0-9a-f]{10})'
             if path == '/api/speed-review/interventions':
                 from nnslr_tools.interventions import queue
-                self._json(200, queue(store, drives))
+                route = parse_qs(urlsplit(self.path).query).get('drive', [None])[0]
+                if route is not None and not re.fullmatch(r'[0-9a-f]{8}--[0-9a-f]{10}', route):
+                    self._problem(400, 'bad_route', 'Invalid drive.', True)
+                    return
+                self._json(200, queue(store, drives, route))
                 return
             match = re.fullmatch(drive + '/interventions', path)
             if match:

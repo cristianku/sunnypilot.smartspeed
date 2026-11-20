@@ -844,10 +844,10 @@ def test_every_dashcam_drive_is_learnt_each_whole_with_nothing_to_mark(tmp_path)
 
 
 def test_assisted_drive_learns_only_confirmed_intervals_and_only_on_one_frozen_partition(tmp_path):
-    from nnslr_tools import interventions, speed_review
+    from nnslr_tools import drive_review, interventions, speed_review
     targets = _targets()
     write_drive(tmp_path, ROUTE, [(0, i) for i in range(50)])
-    info = {'t0_ns': 0, 'span_ns': [0, 50 * NS], 'meta': {'car': {'passive': False}}}
+    info = {'t0_ns': 0, 'span_ns': [0, 50 * NS], 'civil_ms': interventions.RECORD_FROM_MS, 'meta': {'car': {'passive': False}}}
     scanned(tmp_path, ROUTE, info)
     frozen(tmp_path, {ROUTE: ['train'] * 50}, {ROUTE: [f'0/{i}' for i in range(50)]})
     store = speed_review.store_for(tmp_path)
@@ -886,6 +886,11 @@ def test_assisted_drive_learns_only_confirmed_intervals_and_only_on_one_frozen_p
     # Second event crosses train/validation: never split it to make two samples.
     frozen(tmp_path, {ROUTE: ['train'] * 39 + ['validation'] * 11}, {ROUTE: [f'0/{i}' for i in range(50)]})
     assert not answers(read()[0])
+    # A drive whose corrected GPS start places it before this review must no longer contribute, even with saved decisions.
+    with sqlite3.connect(drive_review.db_path(tmp_path)) as db:
+        db.execute("UPDATE scans SET summary=json_set(summary,'$.civil_ms',?) WHERE route=?",
+                   (interventions.RECORD_FROM_MS - 1, ROUTE))
+    assert not targets.training_routes(tmp_path)
 
 
 def test_a_frozen_drive_whose_frames_changed_is_named():

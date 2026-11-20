@@ -17,7 +17,20 @@ with sync_playwright() as p:
     accelerator = page.get_by_role('link', name='Accelerator · 0:20', exact=False)
     expect(accelerator).to_be_visible(timeout=18000)
     page.screenshot(path=str(Path(output) / 'queue-1180.png'), animations='disabled')
+    page.goto(f'http://127.0.0.1:{port}/speed-review?drive={route}&side=signs')
+    sidebar = page.get_by_role('radiogroup', name='Drive review side')
+    for width in (820, 1180):
+        page.set_viewport_size({'width': width, 'height': 960})
+        for name in ('Speed', 'Signs', 'Interventions'):
+            expect(sidebar.get_by_role('radio', name=name, exact=True)).to_be_visible()
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+    sidebar.get_by_role('radio', name='Interventions', exact=True).click()
+    expect(page.get_by_role('heading', name='Interventions on this drive')).to_be_visible()
+    page.reload()
+    expect(sidebar.get_by_role('radio', name='Interventions', exact=True)).to_be_checked()
     accelerator.click()
+    assert 'scope=drive' in page.url
+    page.reload()
     expect(page.locator('.rt-pos b')).to_have_text('0:05')
     page.get_by_text('Go to intervention', exact=True).click()
     page.get_by_role('button', name='From here').click()
@@ -39,6 +52,9 @@ with sync_playwright() as p:
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
     page.get_by_role('button', name='Save speed block').click()
     expect(page.get_by_text('Every intervention is reviewed.')).to_be_visible()
+    assert f'drive={route}' in page.url
+    page.get_by_role('link', name='All drives').click()
+    expect(page.get_by_role('heading', name='Manual interventions')).to_be_visible()
     page.get_by_role('radio', name='Reviewed', exact=True).click()
     page.set_viewport_size({'width': 820, 'height': 1000})
     page.screenshot(path=str(Path(output) / 'queue-820.png'))

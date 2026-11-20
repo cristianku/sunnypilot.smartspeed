@@ -10,7 +10,7 @@ import Segmented from './Segmented.vue';
 import {clockOf, valueAt, type Series} from './drive-review';
 import {jobOf} from './jobs';
 import {MIN_BLOCK_NS, speedAt, speedIndex, type SpeedPoint, type SpeedRow} from './speed-review';
-import {goTo, tabDrive, tabIntervention} from './tabs';
+import {driveInterventionScope, goTo, tabDrive, tabIntervention} from './tabs';
 
 type Choice = 'driver' | 'block' | 'skip';
 interface Clip {
@@ -22,7 +22,7 @@ interface Detail {
   span: [number, number]; revision: number; speed: SpeedPoint[]; owners: Series;
   vision: SpeedPoint[]; cruise: SpeedPoint[]; pre_roll_ns: number;
 }
-const props = defineProps<{readOnly: boolean; status: PanelStatus | null; drives: SpeedRow[]}>();
+const props = defineProps<{readOnly: boolean; status?: PanelStatus | null; drives?: SpeedRow[]; driveQueue?: string}>();
 const emit = defineEmits<{run: [name: ActionName, state: ActionState]; stop: [job: Job]; details: [job: Job]}>();
 const labels = {gas: 'Accelerator', brake: 'Brake', cancel: 'Cancel'};
 const decisions = {pending: 'To review', driver: 'Your speed', block: 'Speed block', skip: 'Skipped'};
@@ -30,34 +30,52 @@ const groups = [{key: 'pending', label: 'To review'}, {key: 'reviewed', label: '
 const group = ref<'pending' | 'reviewed'>('pending');
 const clips = shallowRef<Clip[] | null>(null);
 const error = ref('');
+type Scope = 'all' | 'eligible' | 'not_scanned' | 'historical' | 'undated' | 'dashcam';
+const scope = ref<Scope>('all');
+const scopeNotes: Partial<Record<Scope, string>> = {
+  historical: 'This drive was recorded before intervention review started. Only new assisted drives are reviewed.',
+  undated: 'There is no GPS recording date for this drive yet.',
+  not_scanned: 'Read the drive logs to check for interventions.',
+  dashcam: 'This was a dashcam drive. Interventions are reviewed on assisted drives.',
+};
+const queueRoute = computed(() => props.driveQueue ?? (driveInterventionScope.value ? tabDrive.value : null));
+let request = 0;
 async function loadQueue(): Promise<void> {
+  const id = ++request, route = queueRoute.value;
   try {
-    const rows = (await api<{events: Clip[]}>('/api/speed-review/interventions')).events;
-    if (!Array.isArray(rows)) throw new Error('Could not read the intervention list.');
-    clips.value = rows;
+    const url = '/api/speed-review/interventions' + (route ? '?' + new URLSearchParams({drive: route}) : '');
+    const answer = await api<{scope?: Scope; events: Clip[]}>(url);
+    if (id !== request) return;
+    if (!Array.isArray(answer.events)) throw new Error('Could not read the intervention list.');
+    // A running server from before the drive filter returns the global queue. Never open another drive's clip here.
+    clips.value = route ? answer.events.filter(c => c.route === route) : answer.events;
+    scope.value = route && (!answer.scope || answer.scope === 'all') ? 'eligible' : answer.scope ?? 'all';
     error.value = '';
-  } catch (e) { error.value = messageOf(e); }
+  } catch (e) { if (id === request) error.value = messageOf(e); }
 }
-void loadQueue();
-const job = computed(() => jobOf(props.status, ['interventions']));
+watch(queueRoute, () => { clips.value = null; error.value = ''; void loadQueue(); }, {immediate: true});
+const job = computed(() => jobOf(props.status ?? null, ['interventions']));
 const action = computed(() => props.status?.actions.interventions);
 watch(() => job.value && job.value.id + ':' + job.value.state, () => {
   // A short search may already be finished on the first status update after clicking Find.
   if (job.value && job.value.state !== 'running') void loadQueue();
 });
-const labelByRoute = computed(() => new Map(props.drives.map(d => [d.route, [d.when, d.title].filter(Boolean).join(' · ')])));
+const labelByRoute = computed(() => new Map((props.drives ?? []).map(d => [d.route, [d.when, d.title].filter(Boolean).join(' · ')])));
 const filtered = computed(() => (clips.value ?? []).filter(c => (c.decision === 'pending') === (group.value === 'pending')));
-const limit = ref(60);
-watch(group, () => { limit.value = 60; });
+const batch = props.driveQueue ? 12 : 60;
+const limit = ref(batch);
+watch(group, () => { limit.value = batch; });
 const clip = computed(() => clips.value?.find(c => c.route === tabDrive.value && c.event === tabIntervention.value) ?? null);
-const queueUrl = '/speed-review?intervention=queue';
-const href = (c: Clip) => '/speed-review?' + new URLSearchParams({drive: c.route, intervention: c.event});
+const allDrivesUrl = '/speed-review?intervention=queue';
+const queueUrl = computed(() => queueRoute.value ? '/speed-review?' + new URLSearchParams({drive: queueRoute.value, intervention: 'queue'}) : allDrivesUrl);
+const href = (c: Clip) => '/speed-review?' + new URLSearchParams({drive: c.route, intervention: c.event,
+  ...(queueRoute.value ? {scope: 'drive'} : {})});
 function next(): void {
   const rows = clips.value ?? [];
   const index = clip.value ? rows.indexOf(clip.value) : -1;
   const other = [...rows.slice(index + 1), ...rows.slice(0, index)].find(c => c.decision === 'pending');
-  if (other) goTo('speedreview', '', other.route, other.event);
-  else goTo('speedreview', '', null, 'queue');
+  if (other) goTo('speedreview', '', other.route, other.event, !!queueRoute.value);
+  else goTo('speedreview', '', queueRoute.value, 'queue');
 }
 
 const player = useTemplateRef<InstanceType<typeof DriveReviewDrive>>('player');
@@ -79,7 +97,7 @@ async function loadDrive(route: string | null): Promise<void> {
     if (generation === id) detail.value = data;
   } catch (e) { if (generation === id) detailError.value = messageOf(e); }
 }
-watch(tabDrive, route => { playerT0.value = null; at.value = 0; void loadDrive(route); }, {immediate: true});
+watch(() => clip.value?.route ?? null, route => { playerT0.value = null; at.value = 0; void loadDrive(route); }, {immediate: true});
 function follow(cursor: number, t0: number): void { playerT0.value = t0; at.value = cursor; }
 const start = ref<number | null>(null);
 const end = ref<number | null>(null);
@@ -173,32 +191,35 @@ function path(points: SpeedPoint[], from: number, to: number, x: (v: number) => 
 </script>
 
 <template>
-  <section v-if="!tabDrive" class="card sr-drives" aria-labelledby="iv-title">
-    <div class="ds-head"><h2 id="iv-title">Manual interventions</h2>
-      <button type="button" class="btn small" :disabled="!action?.allowed || readOnly || job?.state === 'running'"
+  <section v-if="driveQueue || !tabDrive" :class="driveQueue ? 'iv-drive' : 'card sr-drives'" :aria-labelledby="driveQueue ? 'sr-card-title' : 'iv-title'">
+    <div class="ds-head"><h3 v-if="driveQueue" id="sr-card-title">Interventions on this drive</h3><h2 v-else id="iv-title">Manual interventions</h2>
+      <a v-if="driveQueue" class="link-button" :href="allDrivesUrl">All drives ›</a>
+      <button v-else type="button" class="btn small" :disabled="!action?.allowed || readOnly || job?.state === 'running'"
               :title="action?.reason || 'Find pedal overrides and cancellations in the scanned logs'"
               @click="action && emit('run', 'interventions', action)">Find interventions</button></div>
     <JobProgress v-if="job && job.state !== 'ok'" :job="job" @details="emit('details', $event)" @stop="emit('stop', $event)"/>
     <p v-else-if="job" class="import-last">Search complete · <button class="link-button" @click="emit('details', job)">Details</button></p>
-    <div class="sr-cars"><Segmented v-model="group" :options="groups" label="Intervention status"/></div>
+    <div v-if="!driveQueue || scope === 'eligible'" class="sr-cars"><Segmented v-model="group" :options="groups" label="Intervention status"/></div>
     <p v-if="error" class="empty">{{ error }} <button class="link-button" @click="loadQueue">Try again</button></p>
     <p v-else-if="clips === null" class="empty">Loading interventions…</p>
+    <p v-else-if="scopeNotes[scope]" class="dr-hint">{{ scopeNotes[scope] }}</p>
     <p v-else-if="!filtered.length" class="empty">{{ group === 'reviewed' ? 'No interventions reviewed yet.'
-      : clips.length ? 'Every intervention is reviewed.' : 'Read the drive logs, then choose Find interventions.' }}</p>
+      : clips.length ? 'Every intervention is reviewed.' : driveQueue ? 'No interventions on this drive. Only newly recorded assisted drives are included.'
+      : 'No interventions to review yet. Only newly recorded assisted drives are included.' }}</p>
     <template v-else><p class="dr-hint">{{ plural(filtered.length, 'intervention') }}</p><ul class="rt-list">
       <li v-for="c in filtered.slice(0,limit)" :key="c.route+c.event" class="rt-drive">
         <a class="rt-open" :href="href(c)"><div class="rt-name"><strong>{{ labels[c.kind] }} · {{ clockOf(c.second) }}</strong>
-          <span>{{ labelByRoute.get(c.route) || c.route }}</span></div>
+           <span v-if="!driveQueue">{{ labelByRoute.get(c.route) || c.route }}</span></div>
           <p class="dr-drive-state">{{ c.source === 'openpilot' ? 'openpilot longitudinal' : 'Cruise' }} · {{ decisions[c.decision] }}</p>
           <span class="data-chev rt-go" aria-hidden="true">›</span></a></li></ul>
-      <button v-if="filtered.length > limit" type="button" class="btn small" @click="limit += 60">Show more</button></template>
+       <button v-if="filtered.length > limit" type="button" class="btn small" @click="limit += batch">Show more</button></template>
   </section>
   <section v-else-if="!clip || detailError" class="card">
     <a class="link-button" :href="queueUrl">‹ Interventions</a>
     <p>{{ detailError || error || (clips === null ? 'Loading…' : 'This intervention is no longer in the queue.') }}</p>
   </section>
   <DriveReviewDrive v-else :key="clip.route" ref="player" :route="clip.route" :read-only="readOnly"
-                   tab="speedreview" back-label="Interventions" back-item="queue" :rates="[1,2,4]" sharp
+                    tab="speedreview" back-label="Interventions" back-item="queue" :back-drive="queueRoute" :rates="[1,2,4]" sharp
                    start-zoom="one" simple-lanes :car-kph="dashboard" @time="follow">
     <template #lane="{from,to,x,w,width}"><div v-if="detail" class="dr-lane sr-lane">
       <span class="dr-lane-name">Speeds<small>km/h</small></span>

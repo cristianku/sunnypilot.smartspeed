@@ -39,7 +39,7 @@ import {grownLayout, stageHeight} from './stage-size';
 import StageGrip from './StageGrip.vue';
 import {type ControlTab, goTo} from './tabs';
 
-const props = withDefaults(defineProps<{route: string; readOnly: boolean; tab: ControlTab; backLabel: string; backItem?: string;
+const props = withDefaults(defineProps<{route: string; readOnly: boolean; tab: ControlTab; backLabel: string; backItem?: string; backDrive?: string | null;
   simpleLanes?: boolean; rates?: readonly number[]; startZoom?: Zoom; sharp?: boolean; carKph?: number | null;
   pickMap?: boolean; arrows?: boolean; limits?: boolean; fullScreen?: boolean; sharpBase?: string | null}>(), {simpleLanes: false,
   rates: () => [], sharp: false, startZoom: 'one', pickMap: false, arrows: true, limits: true, fullScreen: false, sharpBase: null});
@@ -799,7 +799,7 @@ const whenNote = computed(() => view.value && view.value.when && !view.value.whe
   ? 'The date comes from the files\' times (no GPS fix in the logs): it may be off.' : '');
 function back(): void {
   pause();
-  if (props.backItem) goTo(props.tab, '', null, props.backItem);
+  if (props.backItem) goTo(props.tab, '', props.backDrive ?? null, props.backItem);
   else if ((history.state as {fromList?: boolean} | null)?.fromList) history.back();
   else goTo(props.tab);
 }

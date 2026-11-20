@@ -63,11 +63,28 @@ def indexed(tmp_path, monkeypatch):
     path.write_bytes(gzip.compress(json.dumps(data).encode()))
     drives = drive_review.store_for(tmp_path)
     files = {'0': {'sha256': 'abcd', 'kind': 'rlog'}}
-    summary = {'t0_ns': T0, 'span_ns': data['span'], 'meta': data['meta']}
+    summary = {'t0_ns': T0, 'span_ns': data['span'], 'meta': data['meta'], 'civil_ms': interventions.RECORD_FROM_MS}
     drives._run([("INSERT INTO scans(route,state,files,summary) VALUES(?,'done',?,?)",
                   (ROUTE, json.dumps(files), json.dumps(summary)))])
     interventions.prepare(tmp_path)
     return speed_review.store_for(tmp_path), drives
+
+
+@pytest.mark.parametrize(('recorded', 'reason'), [(interventions.RECORD_FROM_MS - 1, 'historical'), (None, 'undated')])
+def test_old_or_undated_recordings_stay_out_even_when_imported_again(tmp_path, indexed, recorded, reason, monkeypatch):
+    store, drives = indexed
+    candidates = interventions.queue(store, drives)['events']
+    assert candidates
+    drives._run([("UPDATE scans SET summary=json_set(summary,'$.civil_ms',?), finished_at='2027-01-01' WHERE route=?",
+                  (recorded, ROUTE))])
+    # Even a direct link to a previously found clip is not a way to review an old drive before the next Find.
+    assert interventions.queue(store, drives, ROUTE) == {'events': [], 'scope': reason}
+    assert not interventions.queue(store, drives)['events']
+    with pytest.raises(speed_review.SpeedReviewError, match='newly recorded'):
+        interventions.decide(store, drives, ROUTE, {'event': candidates[0]['event'], 'decision': 'skip'}, 'driver')
+    monkeypatch.setattr(drives, 'merged', lambda *a, **kw: pytest.fail('opened a historical drive'))
+    interventions.prepare(tmp_path)
+    assert store._rows("SELECT count(*) AS n FROM speed_interventions WHERE active=1")[0]['n'] == 0
 
 
 def test_refresh_preserves_a_persons_decision_and_only_accepted_intervals_are_targets(tmp_path, indexed):
@@ -85,6 +102,8 @@ def test_refresh_preserves_a_persons_decision_and_only_accepted_intervals_are_ta
         events = request('GET', '/api/speed-review/interventions')[1]['events']
         gas, brake = events
         assert [(e['kind'], e['second'], e['decision']) for e in events] == [('gas', 20, 'pending'), ('brake', 44, 'pending')]
+        assert request('GET', '/api/speed-review/interventions?drive=' + ROUTE)[1] == {'events': events, 'scope': 'eligible'}
+        assert request('GET', '/api/speed-review/interventions?drive=00000002--abcdef1234')[1] == {'events': [], 'scope': 'not_scanned'}
         detail = request('GET', path)[1]
         assert detail['vision'] == [[T0, 50]] and detail['pre_roll_ns'] == 15 * NS
         body = {'decision': 'driver', 'event': gas['event'], 'event_revision': 0, 'start_ns': t(21), 'end_ns': t(26),

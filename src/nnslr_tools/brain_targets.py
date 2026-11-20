@@ -398,7 +398,7 @@ def road_kinds(root: Path) -> tuple[str, ...]:
     return tuple(road_labels(root))
 
 
-def _dashcam_spans(root: Path, left_out: dict | None = None) -> dict[str, tuple[int, int]]:
+def _dashcam_spans(root: Path, left_out: dict | None = None, *, assisted: set[str] | None = None) -> dict[str, tuple[int, int]]:
     """{route: (t0_ns, end_ns)} of every dashcam drive (speed_review.dashcam_drive) with a finished scan (its start and its
     end on the comma's clock, in drive_review.sqlite, read only) and its frames (derived/frames). left_out, when given,
     gets SUNNYPILOT_ON for each scanned drive that is no dashcam drive, by route."""
@@ -422,6 +422,8 @@ def _dashcam_spans(root: Path, left_out: dict | None = None) -> dict[str, tuple[
         if not dashcam_drive(summary):
             if left_out is not None:
                 left_out[row['route']] = SUNNYPILOT_ON
+            if assisted is not None and interventions.review_scope(summary) == 'eligible':
+                assisted.add(row['route'])
             continue
         if any((Path(root) / FRAMES_RELATIVE / row['route']).glob('*/frames.jsonl')):
             found[row['route']] = (summary['t0_ns'], span[-1])
@@ -430,13 +432,14 @@ def _dashcam_spans(root: Path, left_out: dict | None = None) -> dict[str, tuple[
 
 def _training_sources(root: Path, left_out: dict):
     """Whole dashcam drives, and separately only confirmed intervals of assisted drives with frames."""
-    dashcam = _dashcam_spans(root, left_out)
+    assisted = set()
+    dashcam = _dashcam_spans(root, left_out, assisted=assisted)
     reviews = {}
     if db_path(root).is_file():
         db = _connect_read_only(db_path(root))
         try:
             reviews = {route: clips for route, clips in interventions.approved(db).items()
-                       if route in left_out and any((Path(root) / FRAMES_RELATIVE / route).glob('*/frames.jsonl'))}
+                       if route in assisted and any((Path(root) / FRAMES_RELATIVE / route).glob('*/frames.jsonl'))}
         finally:
             db.close()
         for route in reviews:

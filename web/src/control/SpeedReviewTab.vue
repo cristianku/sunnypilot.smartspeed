@@ -246,7 +246,7 @@ onBeforeUnmount(() => window.clearTimeout(timer));
     <SectionHead tab="speedreview"/>
     <Segmented v-if="!isGuest()" v-model="section" :options="reviewTabs" label="Review section" class="iv-subnav"/>
   </template>
-  <InterventionReview v-if="tabIntervention" :status="status" :read-only="readOnly" :drives="drives ?? []"
+  <InterventionReview v-if="tabIntervention && !(tabDrive && tabIntervention === 'queue')" :status="status" :read-only="readOnly" :drives="drives ?? []"
                       @run="(name, state) => emit('run', name, state)" @stop="emit('stop', $event)" @details="emit('details', $event)"/>
   <SpeedReviewDrive v-else-if="tabDrive" :key="tabDrive" :route="tabDrive" :read-only="readOnly"/>
   <template v-else>

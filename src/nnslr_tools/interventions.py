@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import bisect
 import contextlib
+import json
 import sqlite3
+from datetime import datetime, timezone
 
 from nnslr_tools import drive_logs, drive_review, progress
 from nnslr_tools.drive_episodes import BEFORE_NS, CANCEL_BUTTONS, Step
@@ -17,6 +19,19 @@ from nnslr_tools.speed_review import (MAX_KPH, MIN_BLOCK_SECONDS, NS, SpeedRevie
 
 PRE_ROLL_NS = 15 * NS
 MACHINES = ('openpilot', 'cruise')
+# The start of this review, on the recording clock. An old drive imported or rescanned later stays old.
+RECORD_FROM_MS = int(datetime(2026, 11, 20, 8, 39, 10, tzinfo=timezone.utc).timestamp() * 1000)
+
+
+def review_scope(summary: dict | None) -> str:
+    if not summary:
+        return 'not_scanned'
+    start = summary.get('civil_ms')  # drive_logs.civil_start: GPS UTC projected back to the start of the drive
+    if type(start) is not int or start <= 0:
+        return 'undated'
+    if start < RECORD_FROM_MS:
+        return 'historical'
+    return 'dashcam' if dashcam_drive(summary) else 'eligible'
 
 
 def ownership(merged: dict) -> Step:
@@ -93,7 +108,7 @@ def candidates(merged: dict) -> list[tuple]:
 def replace_candidates(store, route: str, found: list[tuple]) -> None:
     with contextlib.closing(store._connect()) as db, db:
         db.execute('BEGIN IMMEDIATE')
-        db.execute('UPDATE speed_interventions SET active=0 WHERE route=?', (route,))
+        db.execute('UPDATE speed_interventions SET active=0 WHERE route=? AND active=1', (route,))
         db.executemany('INSERT INTO speed_interventions(route,event,at_ns,kind,source) VALUES(?,?,?,?,?) '
                        'ON CONFLICT(route,event) DO UPDATE SET active=1, source=excluded.source',
                        [(route, *row) for row in found])
@@ -102,10 +117,11 @@ def replace_candidates(store, route: str, found: list[tuple]) -> None:
 def prepare(root, log=print) -> None:
     drives, store = drive_review.store_for(root), store_for(root)
     routes = [row['route'] for row in drives._rows("SELECT route FROM scans WHERE state='done' ORDER BY route")]
-    count = 0
+    count = eligible = 0
     for i, route in enumerate(routes, 1):
         summary = drives.summary(route)
-        if summary and not dashcam_drive(summary):
+        if review_scope(summary) == 'eligible':
+            eligible += 1
             merged = drives.merged(route, keep=False)
             expected = {int(s) for s in summary['files']} - {row['segment'] for row in summary.get('left_out', ())}
             if not merged or not expected or set(merged.get('segments', ())) != expected:
@@ -117,18 +133,38 @@ def prepare(root, log=print) -> None:
         elif summary:
             replace_candidates(store, route, [])
         progress.report('interventions', i, len(routes), f'{i}/{len(routes)} drives · {count} interventions')
-    log(f'{count} interventions in the queue from {len(routes)} scanned drives. Existing reviews kept.')
+    log(f'{count} interventions found in {eligible} eligible assisted drives ({len(routes)} scanned). Existing reviews kept.')
 
 
-def queue(store: SpeedReviewStore, drives) -> dict:
-    starts = {r['route']: r['t0'] for r in drives._rows("SELECT route,json_extract(summary,'$.t0_ns') AS t0 FROM scans")}
-    return {'events': [{**row, 'second': (row['at_ns'] - starts[row['route']]) / NS} for row in store._rows(
+def queue(store: SpeedReviewStore, drives, route: str | None = None) -> dict:
+    clause, args = (' WHERE route=?', (route,)) if route is not None else ('', ())
+    starts = {}
+    scope = 'not_scanned' if route is not None else 'all'
+    for row in drives._rows('SELECT route,summary FROM scans' + clause, args):
+        summary = json.loads(row['summary']) if row['summary'] else None
+        status = review_scope(summary)
+        if route is not None:
+            scope = status
+        if status == 'eligible' and summary.get('t0_ns') is not None:
+            starts[row['route']] = summary['t0_ns']
+    rows = store._rows(
         'SELECT route,event,at_ns,kind,source,active,decision,start_ns,end_ns,kph,reviewer,revision '
-        "FROM speed_interventions WHERE active=1 OR decision!='pending' ORDER BY route DESC,at_ns,kind")
-        if starts.get(row['route']) is not None]}
+        "FROM speed_interventions WHERE (active=1 OR decision!='pending')"
+        + (' AND route=?' if route is not None else '') + ' ORDER BY route DESC,at_ns,kind', args) if starts else []
+    return {'scope': scope, 'events': [{**row, 'second': (row['at_ns'] - starts[row['route']]) / NS}
+                                       for row in rows if row['route'] in starts]}
+
+
+def _require_eligible(summary):
+    scope = review_scope(summary)
+    if scope == 'not_scanned':
+        raise SpeedReviewError(404, 'not_scanned', 'Read the logs of this drive first.')
+    if scope != 'eligible':
+        raise SpeedReviewError(409, scope, 'Only newly recorded assisted drives can be reviewed for interventions.')
 
 
 def detail(store, drives, route):
+    _require_eligible(drives.summary(route))
     revision = store.revision(route)
     merged = drives.merged(route)
     if not merged or merged.get('t0') is None:
@@ -147,8 +183,7 @@ def decide(store, drives, route: str, body: dict, who: str) -> dict:
     if not isinstance(event, str) or choice not in ('driver', 'block', 'skip'):
         raise SpeedReviewError(400, 'bad_decision', 'Choose an intervention and how to review it.')
     summary = drives.summary(route)
-    if not summary or dashcam_drive(summary):
-        raise SpeedReviewError(409, 'not_assisted', 'This is not a scanned assisted drive.')
+    _require_eligible(summary)
     revision = _integer(body.get('base_revision'), 'base_revision')
     event_revision = _integer(body.get('event_revision'), 'event_revision')
     start = end = kph = None

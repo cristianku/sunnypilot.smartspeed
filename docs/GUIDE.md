@@ -52,9 +52,13 @@ You can run the helpers again whenever you like: work already done is skipped. `
 
 ### Reviewing manual longitudinal interventions
 
-Open **Data › Speed and sign review › Interventions**. **Find interventions** reads the already scanned logs
-for accelerator or brake presses and driver cancellations while openpilot or cruise held the speed.
-It proposes clips; running it again keeps the decisions already made. For new drives use **Read the logs** on the Drives subtab first.
+Open **Interventions** beside **Speed** and **Signs** in a drive to review that drive's clips.
+**All drives** opens the full queue, also available under **Data › Speed and sign review › Interventions**.
+Only assisted drives recorded from **20 November 2026 at 09:39:10 CET** are eligible. The date comes from
+the recorded GPS clock: importing or rescanning an older drive cannot add it, and drives without a recording date
+stay out. The tab remains visible when the queue is empty. For a new drive, use **Read the logs**, then
+**Find interventions** in the full queue. It proposes accelerator or brake presses and driver cancellations while
+openpilot or cruise held the speed; running it again keeps existing decisions.
 
 Open a clip to see the road video starting 15 seconds before the intervention. The speed lane compares your dashboard,
 the recorded vision proposal and the cruise set speed; a missing value is shown as a dash. The proposal is what the
@@ -62,7 +66,8 @@ comma displayed and need not have been the active controller. Use **From here** 
 what should be learned, including an earlier approach or the recovery. **Use my speed** takes the dashboard speed only
 where the logs confirm driver control. **Correct with a block** sets your chosen km/h over the selected interval,
 including one where the machine drove. **Skip** excludes the event. Saving advances to the next pending event;
-**Next intervention** alone does not save. Select **Reviewed** to change or withdraw a decision.
+**Next intervention** alone does not save. From the drive sidebar, both stay on that drive.
+Select **Reviewed** to change or withdraw a decision.
 
 Only the selected intervals of accepted assisted-drive clips are eligible for the brain's next training. Context
 before them has no target; skipped clips contribute nothing. The frozen place split stays in force: a clip crossing
