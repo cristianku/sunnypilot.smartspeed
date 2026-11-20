@@ -734,6 +734,30 @@ def motion_inputs(series: dict, ns: np.ndarray) -> np.ndarray:
     return rows
 
 
+def standstill_inputs(series: dict, ns: np.ndarray) -> np.ndarray:
+    """The standstill group (frames, size): the car's StandstillInputs given carState.standstill as the log holds it,
+    its changes in their order and the value held given again at each frame, the latest at or before it (the car hears
+    every carState). Where the log says carState stopped (drive_extract's None, GAP_SECONDS after its last message) the
+    last message goes back there, so the frames STANDSTILL_SECONDS after it are unknown, as on the car. Unknown, never
+    "moving", on a drive whose logs were read before the series was kept, and at a frame with no time."""
+    points = series.get('standstill') or []
+    stand = BRAIN_INPUTS.StandstillInputs()
+    rows = np.zeros((len(ns), INPUT_SIZES['standstill']), dtype=np.float32)
+    at, held = 0, None
+    for row in sorted(np.flatnonzero(ns >= 0), key=lambda row: ns[row]):
+        while at < len(points) and points[at][0] <= ns[row]:
+            t, held = points[at]
+            if held is None:
+                stand.lost(t / NS - GAP_SECONDS['carState'])
+            else:
+                stand.add(t / NS, held is True)
+            at += 1
+        if held is not None:
+            stand.add(ns[row] / NS, held is True)
+        rows[row] = stand.row(ns[row] / NS)
+    return rows
+
+
 class _SpeedFeed:
     """vEgo (a step series [t_ns, km/h]) to a vision.SignDistance on a grid of SPEED_GRID_SECONDS from its first point."""
 
@@ -1037,7 +1061,8 @@ def drive_inputs(frames: list[dict], ns: np.ndarray, merged: dict, readings: lis
             'sign_slots': box_inputs(seconds, *(every if every is not None else (readings, boxes)), 'sign_slots'),
             'country_iso': country_iso.reshape(len(ns), INPUT_SIZES['country_iso']),
             'hour_tz': hour_tz.reshape(len(ns), INPUT_SIZES['hour_tz']),
-            'map_limit': map_limit.reshape(len(ns), INPUT_SIZES['map_limit'])}
+            'map_limit': map_limit.reshape(len(ns), INPUT_SIZES['map_limit']),
+            'standstill': standstill_inputs(series, ns)}
 
 
 def inputs_sha256() -> str:
@@ -1185,6 +1210,7 @@ def drive_targets(root: Path, route: str, labels: dict, merged: dict, split: dic
                                    all_readings(record) if other_road_boxes else None)
             if inputs else None,
             'signs_read': readings is not None,
+            'standstill_read': drive_logs.standstill_read(merged),
             'boxes_read': record is not None and record.get('boxes') is not None,
             'reader': record.get('fingerprint') if record else None,
             'pictures': rate == 1.0 or pictures_ready(root, record),
@@ -1282,6 +1308,10 @@ def check_drives(drives: list[dict]) -> None:
     bare = [drive['route'] for drive in drives if not drive.get('pictures', True)]
     if bare:
         raise ValueError(f"drives without the brain's pictures: {', '.join(bare)}. Run {READ_COMMAND}")
+    still = [drive['route'] for drive in drives if not drive.get('standstill_read', True)]
+    if still:
+        raise ValueError("drives whose logs were read before carState.standstill was kept, which the brain now gets "
+                         f"(standstill): {', '.join(still)}. Read the logs on Data › Speed review")
 
 
 def loss_weights(drive: dict, partition: str) -> tuple[np.ndarray, np.ndarray]:

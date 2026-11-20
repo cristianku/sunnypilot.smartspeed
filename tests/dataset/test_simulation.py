@@ -483,8 +483,9 @@ class Loop:
         self.gps_clock = None
         self.gps_country = None
 
-    def car_state(self, now, log_time, v_ego, *rest):
+    def car_state(self, now, log_time, v_ego, steering_deg, left, right, yaw_rate, gas, brake, standstill=None):
         self.calls.append(('car', round(now, 3), round(log_time, 3), v_ego))
+        self.standstill = standstill
 
     def enabled(self, now, enabled):
         self.calls.append(('enabled', round(now, 3), enabled))
@@ -543,7 +544,8 @@ def test_a_replay_gives_the_loop_what_speedvisiond_gets_in_its_order(tmp_path, m
     times = [10 * second + 50_000_000 * index for index in range(10)]
     times[2] = None
     monkeypatch.setattr(simulation, 'read_logs', lambda root, route, workers=None: {
-        'car': [(10 * second - 5_000_000, 3.0, 0.0, False, False, 0.0, False, False), (10 * second + 120_000_000, 4.0, 0.0, False, False, 0.0, False, False)],
+        'car': [(10 * second - 5_000_000, 3.0, 0.0, False, False, 0.0, False, False, True),
+                (10 * second + 120_000_000, 4.0, 0.0, False, False, 0.0, False, False, False)],
         'enabled': [(10 * second - 1_000_000, True)],
         'motion': [(10 * second + 60_000_000, 0.25, True)],
         'radar': [(10 * second - 9_000_000, True, 30.0, 10.0), (10 * second - 2_000_000, True, 20.0, 10.0)],
@@ -572,6 +574,8 @@ def test_a_replay_gives_the_loop_what_speedvisiond_gets_in_its_order(tmp_path, m
     assert made['out']['rawSignClass'] == ['', '', ''] and made['out']['speedLimitAhead'] == [0.0] * 3  # unset: as the car leaves them
     assert made['signs'] == {'1': [[1.0, 2.0, 3.0, 4.0, 0.5, 'maximum_speed:50', 0.9, 'own_road']]}
     assert made['in']['v_ego'] == [3.0, 4.0, 4.0] and made['in']['enabled'] == [True] * 3
+    # carState.standstill reaches the loop as speedvisiond gives it, its last argument (#121)
+    assert made['in']['standstill'] == [True, False, False] and loop.standstill is False
     assert made['in']['lead_m'] == [20.0] * 3 and made['in']['yaw_device'] == [None, 0.25, 0.25]
     assert (made['set'], made['name'], made['frame'], made['device']) == ('car', 'speed-limits fake', [width, height], 'cpu')
     assert np.isclose(made['in']['lead_kph'][0], 36.0)

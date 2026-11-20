@@ -106,8 +106,8 @@ FIELDS = {'speedLimit': 0.0, 'speedLimitAhead': 0.0, 'speedLimitAheadDistance': 
           'rawSignConfidence': 0.0, 'rawSignTaken': False, 'rawSignValue': 0.0, 'rawSignUnit': '', 'rawSignCountry': '',
           'rawSignRoad': '', 'signDistance': 0.0, 'signSize': 0.0, 'rawSignSeen': False}
 # The car's signals kept with every frame read: what went in.
-INPUTS = ('v_ego', 'steering_deg', 'left', 'right', 'yaw_rate', 'gas', 'brake', 'enabled', 'yaw_device', 'lead_m',
-          'lead_kph', 'country', 'unix_s')
+INPUTS = ('v_ego', 'steering_deg', 'left', 'right', 'yaw_rate', 'gas', 'brake', 'standstill', 'enabled', 'yaw_device',
+          'lead_m', 'lead_kph', 'country', 'unix_s')
 # The series of the page (view), named as drive_extract names speedVisionSP's: (series, field, scale, decimals).
 SERIES = (('vis_limit', 'speedLimit', 3.6, 2), ('vis_ahead', 'speedLimitAhead', 3.6, 2),
           ('vis_ahead_dist', 'speedLimitAheadDistance', 1, 1), ('vis_road', 'roadType', None, None),
@@ -921,8 +921,9 @@ def _read_log(task: tuple[str, str]) -> dict:
         at = event.logMonoTime
         if which == 'carState':
             state = event.carState
+            # standstill last: pipeline.car_state's last argument, the brain's standstill group (#121).
             found['car'].append((at, state.vEgo, state.steeringAngleDeg, state.leftBlinker, state.rightBlinker,
-                                 state.yawRate, state.gasPressed, state.brakePressed))
+                                 state.yawRate, state.gasPressed, state.brakePressed, state.standstill))
         elif which == 'selfdriveState':
             found['enabled'].append((at, event.selfdriveState.enabled))
         elif which == 'deviceMotion':
@@ -1081,7 +1082,7 @@ def replay(root: Path, route: str, set_key: str, *, device: str = 'cuda', packag
     inputs: dict[str, list] = {name: [] for name in INPUTS}
     brain_rows: dict[str, list] = {}
     brain_types: dict[str, list] = {}
-    car_now = (None,) * 7
+    car_now = (None,) * 8
     enabled_now = yaw_now = None
     video_sha: list[list] = []
     for position, segment in enumerate(segments):

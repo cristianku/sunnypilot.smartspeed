@@ -203,7 +203,8 @@ def test_a_group_has_the_size_it_says():
             'motion': brain.MotionInputs().row(10.0), 'road_signs': signs.road_signs_row(10.0),
             'sign_boxes': sign_boxes().row(10.0), 'light_boxes': light_boxes().row(10.0),
             'country_iso': brain.country_iso_row('PL'), 'hour_tz': brain.hour_row(12.0, 'hour_tz'),
-            'map_limit': brain.map_limit_row(80.0), 'sign_slots': brain.SlotInputs(_car()[1]).row(10.0)}
+            'map_limit': brain.map_limit_row(80.0), 'sign_slots': brain.SlotInputs(_car()[1]).row(10.0),
+            'standstill': brain.StandstillInputs().row(10.0)}
     assert {name: len(row) for name, row in rows.items()} == sizes
     assert brain.pack_inputs(rows, tuple(sizes)).shape == (sum(sizes.values()),)
 
@@ -389,6 +390,54 @@ def test_the_motion_group_on_the_car_is_the_one_of_the_training():
     found = motion_inputs(series, numpy.array(frames) * NS // 100)
     numpy.testing.assert_allclose(found, numpy.array(said), atol=1e-6)
     assert found[:, 0].any() and found[:, 1].any() and not found[:, 7].all() and found[:, 6].any()
+
+
+def test_the_brain_on_the_car_keeps_loading_after_the_standstill_group():
+    """#121: the file the brains until 20 Nov 2026 were trained with; standstill is the last group, so theirs are the same."""
+    brain, _ = _car()
+    assert 'ce1755aae37540976f749ee2c1283d5e457bb51bdd059a6232129625ae4fe1c0' in brain.SAME_GROUPS
+    assert list(brain.INPUT_SIZES)[-1] == 'standstill' and brain.INPUT_SIZES['standstill'] == 2
+
+
+def test_the_standstill_group_on_the_car_is_the_one_of_the_training():
+    """Stopping, a wait with no press of the gas, a tap while it stands, the first motion, carState gone for 1.8 s, and
+    a stop again: the car's StandstillInputs at 100 Hz and the training's on drive_extract's changes, at the 4 Hz steps."""
+    numpy = pytest.importorskip('numpy')
+    from nnslr_tools.brain_targets import NS, standstill_inputs
+    brain, _ = _car()
+    car, series = brain.StandstillInputs(), {'standstill': []}
+
+    def put(t, value):  # drive_extract: a change only
+        if not series['standstill'] or series['standstill'][-1][1] != value:
+            series['standstill'].append([t, value])
+
+    frames, said = list(range(25, 1200, 25)), []
+    for tick in range(1200):
+        t, at = tick * NS // 100, tick / 100
+        # moving, standing from 2 s (a tap of the gas at 4 s changes nothing), moving from 5 s, standing at 9 to 10.5 s
+        standing = 200 <= tick < 500 or 900 <= tick < 1050
+        alive = not 600 <= tick < 780  # carState stops for 1.8 s
+        if alive:
+            car.add(at, standing)
+            put(t, standing)
+        elif tick == 649:  # drive_extract's gap: None 0.5 s after the last message (5.99 s)
+            put(t, None)
+        if tick in frames:
+            said.append(car.row(at))
+    found = standstill_inputs(series, numpy.array(frames) * NS // 100)
+    numpy.testing.assert_allclose(found, numpy.array(said), atol=1e-6)
+    stands, known = found[:, 0], found[:, 1]
+    assert stands.any() and not stands.all() and not known.all() and known[:8].all()
+    assert not stands[(numpy.array(frames) >= 500) & (numpy.array(frames) < 900)].any()  # moving or unknown
+
+
+def test_the_standstill_of_a_drive_read_before_it_was_kept_is_unknown_never_moving():
+    numpy = pytest.importorskip('numpy')
+    from nnslr_tools.brain_targets import NS, standstill_inputs
+    ns = numpy.array([NS, 2 * NS, -1], dtype=numpy.int64)
+    assert not standstill_inputs({}, ns).any()
+    assert standstill_inputs({'standstill': [[0, False]]}, ns)[:2].tolist() == [[0.0, 1.0], [0.0, 1.0]]
+    assert standstill_inputs({'standstill': [[0, False]]}, ns)[2].tolist() == [0.0, 0.0]  # a frame with no time
 
 
 # -- the boxes of the signs (BoxInputs, the group sign_boxes) ---------------------------------------------------------------

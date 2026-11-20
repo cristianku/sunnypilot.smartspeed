@@ -46,6 +46,9 @@ export const BRAIN_GROUPS: BrainGroup[] = [
     + 'Zeros until the cutter and the classifier know the lights and the drives are read again'},
   {name: 'motion', size: 8, use: 'car', what: 'the car’s turn signals (on in the last second, seconds since last on, left and right), '
     + 'the steering angle and the yaw rate (carState, deviceMotion)'},
+  {name: 'standstill', size: 2, use: 'car', what: 'the car is stopped now (carState.standstill, #121), and whether that is known: '
+    + 'the last carState at or before the step, unknown after a second without one, never “moving” then; '
+    + 'with or without the gas, and never “drive 0”'},
   {name: 'map_limit', size: 2, use: 'optional', what: 'the limit the comma’s map had (liveMapDataSP), or none: only with the switch “Map’s limit” on'},
   {name: 'pedals', size: 3, use: 'never', what: 'gas and brake pressed in the last second (carState)'},
   {name: 'speed', size: 2, use: 'never', what: 'the car’s own speed, vEgo'},

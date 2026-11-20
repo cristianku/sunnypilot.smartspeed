@@ -108,6 +108,8 @@ SERIES = (
     ('yaw_car', 'carState', 'yawRate', 'num', 0.5, 57.29578),
     ('yaw_dev', 'deviceMotion', 'angularVelocityDevice.z', 'num', 0.5, -57.29578),
     ('yaw_dev', 'livePose', 'angularVelocityDevice.z', 'num', 0.5, -57.29578),
+    # Whether the car stands, as its port says it: the brain's standstill group (brain_inputs.StandstillInputs, #121).
+    ('standstill', 'carState', 'standstill', 'bool', 0, 1),
 )
 # The fields speedvisiond added on 31 Oct 2026: an older build leaves them unset, read as ''/0/False. speedLimitState
 # is never '' when written, so without it they are None: not in the log, never a value.
@@ -144,6 +146,10 @@ MOTION_VERSION = 1
 # mads_enabled. An extract without it that holds longitudinalPlanSP is read again (drive_logs.stale_extract).
 SMART_KEY = 'smart'
 SMART_VERSION = 1
+# The key of meta that says carState.standstill is read (the series standstill, #121): an extract without it that holds
+# carState is read again (drive_logs.stale_extract), and a brain refuses a drive whose extracts lack it (brain_targets).
+STANDSTILL_KEY = 'standstill'
+STANDSTILL_VERSION = 1
 
 
 def _get(obj, path: str):
@@ -238,7 +244,8 @@ def extract(path: Path, cereal: Path, car: Path) -> dict:
     gps: list[list] = []
     gps_service = None
     counts: dict[str, int] = {}
-    meta: dict = {SIGN_DIST_EXACT: SIGN_DIST_VERSION, MOTION_KEY: MOTION_VERSION, SMART_KEY: SMART_VERSION}
+    meta: dict = {SIGN_DIST_EXACT: SIGN_DIST_VERSION, MOTION_KEY: MOTION_VERSION, SMART_KEY: SMART_VERSION,
+                  STANDSTILL_KEY: STANDSTILL_VERSION}
     first = last = None
     total = 0
 

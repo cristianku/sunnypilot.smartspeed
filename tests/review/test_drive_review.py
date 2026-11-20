@@ -106,6 +106,7 @@ def segment_log(segment: int, gps_unix_ms: int | None = None, skip_frames: tuple
             car.gasPressed = _pressed(s, GAS)
             car.brakePressed = _pressed(s, BRAKE)
             car.steeringPressed = False
+            car.standstill = False
             cruise = car.init('cruiseState')
             cruise.enabled, cruise.available, cruise.speed = True, True, 100 / 3.6
 
@@ -436,6 +437,21 @@ def test_the_timeline_has_what_the_word_smart_is_drawn_by(tmp_path):
     assert drive_logs.stale_extract(value)
     assert not drive_logs.stale_extract({**value, 'meta': {**value['meta'], drive_logs.SMART_KEY: drive_logs.SMART_VERSION}})
     assert not drive_logs.stale_extract({'meta': {drive_logs.MOTION_KEY: 1}, 'series': {'sla_state': []}})
+
+
+def test_the_logs_keep_whether_the_car_stands_and_an_extract_without_it_is_read_again(tmp_path):
+    """#121: carState.standstill is a series of the extract, which says so (STANDSTILL_KEY); an older extract that holds
+    carState is read again, one without carState is not, and a drive merged from them says whether it has it."""
+    comma_drive(tmp_path, segments=(0,))
+    store = drive_review.store_for(tmp_path)
+    store.scan(ROUTE)
+    merged = store.merged(ROUTE)
+    assert merged['series']['standstill'][0][1] is False and drive_logs.standstill_read(merged)
+    marked = {drive_logs.MOTION_KEY: drive_logs.MOTION_VERSION, drive_logs.SMART_KEY: drive_logs.SMART_VERSION}
+    old = {'meta': marked, 'series': {'v_ego': [[1, 50.0]]}}
+    assert drive_logs.stale_extract(old) and not drive_logs.standstill_read(old)
+    assert not drive_logs.stale_extract({**old, 'meta': {**marked, drive_logs.STANDSTILL_KEY: drive_logs.STANDSTILL_VERSION}})
+    assert not drive_logs.stale_extract({'meta': marked, 'series': {'vis_limit': [[1, 50.0]]}})
 
 
 def test_the_timeline_never_sends_another_forks_directions_as_the_road_type(tmp_path, monkeypatch):
