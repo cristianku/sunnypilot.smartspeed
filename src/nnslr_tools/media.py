@@ -310,8 +310,8 @@ def probe_video(path: Path, *, ffprobe: str | None = None) -> VideoProbe:
 def probe_frame_timestamps(path: Path, *, ffprobe: str | None = None, decode: bool = True) -> list[VideoFrameTiming]:
     """Return media presentation/decode timing; never camera capture timing.
 
-    ``decode`` False reads the packets instead of decoding the frames, for a raw HEVC video (its packets are in display
-    order): the same timing without ``pict_type``, in 0.2 s instead of 35 s for a minute of the road camera.
+    ``decode`` False reads packets instead of decoding frames. It requires raw HEVC without reordering, as recorded
+    by the comma's road camera, and returns the same timing without ``pict_type``.
     """
     if not path.is_file():
         raise MediaToolError("video_not_found", str(path))
@@ -320,9 +320,12 @@ def probe_frame_timestamps(path: Path, *, ffprobe: str | None = None, decode: bo
                if decode else "packet=pts_time,dts_time,duration_time,flags")
     payload = _run_json([
         exe, "-v", "error", "-select_streams", "v:0", "-show_frames" if decode else "-show_packets", "-show_format",
-        "-show_entries", entries + ":format=format_name",
+        "-show_entries", entries + ":format=format_name" + ("" if decode else ":stream=has_b_frames"),
         "-print_format", "json", str(path),
     ], reject_stderr=True)
+    if not decode and (payload.get("format", {}).get("format_name") != "hevc"
+                       or [stream.get("has_b_frames") for stream in payload.get("streams", [])] != [0]):
+        raise MediaToolError("packet_order_unknown", str(path))
     frames = payload.get("frames" if decode else "packets", [])
     if not isinstance(frames, list):
         raise MediaToolError("invalid_frame_probe", "frames is not a list")

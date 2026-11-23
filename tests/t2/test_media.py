@@ -125,6 +125,17 @@ def test_raw_hevc_timing_from_the_packets_is_the_decoded_timing(raw_hevc):
     assert decoded[0].key_frame and decoded[0].media_time_source == "raw_hevc_frame_duration"
 
 
+@pytest.mark.parametrize(("container", "reordering"), [("hevc", 2), ("hevc", None), ("mov,mp4", 0)])
+def test_packet_timing_requires_raw_hevc_in_display_order(tmp_path, container, reordering):
+    video = tmp_path / "fcamera.hevc"
+    video.touch()
+    ffprobe = tmp_path / "ffprobe"
+    payload = {"format": {"format_name": container}, "streams": [{"has_b_frames": reordering}]}
+    _write_executable(ffprobe, "#!/bin/sh\ncat <<'EOF'\n" + json.dumps(payload) + "\nEOF\n")
+    with pytest.raises(MediaToolError, match="packet_order_unknown"):
+        probe_frame_timestamps(video, ffprobe=str(ffprobe), decode=False)
+
+
 def test_raw_hevc_clip_seeks_to_real_frames_and_default_is_usable(raw_hevc, tmp_path):
     clip = make_clip(raw_hevc, tmp_path / "clip.mp4", start_s=1.25, end_s=1.75)
     probe = probe_video(clip)

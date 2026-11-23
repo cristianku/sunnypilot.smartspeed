@@ -7,7 +7,7 @@ import pytest
 
 from nnslr_tools.media import extract_frames
 from nnslr_tools.preannotate import discover_frames
-from nnslr_tools.sign_reads import (READ_INDEX_BASE, frame_order, frame_second, is_read_frame, read_frames,
+from nnslr_tools.sign_reads import (READ_INDEX_BASE, _packet_timings, frame_order, frame_second, is_read_frame, read_frames,
                                     wanted_reads)
 
 ROUTE = '00000089--0ac1c0fdec'
@@ -66,7 +66,15 @@ def raw_hevc(tmp_path):
 def test_read_pictures_survive_a_new_extraction_and_never_collide(raw_hevc, tmp_path):
     output = tmp_path / 'frames'
     extract_frames(raw_hevc, output, fps=1)
-    reads = extract_frames(raw_hevc, output, decoded=[13, 27], prefix='read', index_base=READ_INDEX_BASE)
+    timings = _packet_timings(raw_hevc, [13, 27], None)
+    assert timings is not None
+    assert _packet_timings(raw_hevc, [40], None) is None
+    reads = extract_frames(raw_hevc, output, decoded=[13, 27], prefix='read', index_base=READ_INDEX_BASE,
+                           timings=timings)
+    reference = extract_frames(raw_hevc, tmp_path / 'reference', decoded=[13, 27], prefix='read',
+                               index_base=READ_INDEX_BASE)
+    assert [r.to_dict() for r in reads] == [
+        {**r.to_dict(), 'image_path': got.image_path} for r, got in zip(reference, reads, strict=True)]
     assert [(r.output_index, r.decoded_frame_index, r.media_time_s) for r in reads] == [
         (READ_INDEX_BASE + 13, 13, pytest.approx(0.65)), (READ_INDEX_BASE + 27, 27, pytest.approx(1.35))]
     assert sorted(p.name for p in output.glob('read_*.png')) == ['read_00001013.png', 'read_00001027.png']

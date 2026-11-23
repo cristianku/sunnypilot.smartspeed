@@ -96,6 +96,18 @@ def _current(directory: Path, manifest: list[dict], wanted: list[dict], video_sh
             and all(Path(row.get('image_path', '')).is_file() for row in manifest))
 
 
+def _packet_timings(video: Path, decoded: list[int], ffprobe: str | None):
+    """Use the comma's packet clock when it can time all the selected frames; None keeps the full probe."""
+    from nnslr_tools.media import MediaToolError, probe_frame_timestamps
+    try:
+        timings = probe_frame_timestamps(video, ffprobe=ffprobe, decode=False)
+    except MediaToolError:
+        return None
+    if all(0 <= i < len(timings) and timings[i].media_time_s is not None for i in decoded):
+        return timings
+    return None
+
+
 def extract_reads(root: Path, route: str, *, ffmpeg: str | None = None, ffprobe: str | None = None,
                   scan: bool = True, workers: int = 4) -> dict:
     """Write the pictures of the comma's reads of a drive (see the module's text); returns what was done. scan: read
@@ -137,9 +149,10 @@ def extract_reads(root: Path, route: str, *, ffmpeg: str | None = None, ffprobe:
             return segment, 'kept', len(manifest)
         alignment = root / 'derived/alignment' / route / f'{segment}.jsonl'
         alignment = alignment if alignment.is_file() else None
+        decoded = [read['decoded'] for read in wanted]
         result = extract_frames(video, directory, ffmpeg=ffmpeg, ffprobe=ffprobe, overwrite=True,
-                                decoded=[read['decoded'] for read in wanted], prefix=READ_PREFIX,
-                                index_base=READ_INDEX_BASE, alignment=alignment, route_id=route, segment_index=segment)
+                                decoded=decoded, prefix=READ_PREFIX, index_base=READ_INDEX_BASE, alignment=alignment,
+                                route_id=route, segment_index=segment, timings=_packet_timings(video, decoded, ffprobe))
         by_decoded = {read['decoded']: read for read in wanted}
         rows = []
         for row in extracted_frame_rows(result, route_id=route, segment_index=segment, alignment=alignment):
@@ -154,7 +167,7 @@ def extract_reads(root: Path, route: str, *, ffmpeg: str | None = None, ffprobe:
         temporary.replace(manifest_path)
         return segment, 'added', len(rows)
 
-    # Several segments at once, as nnslr extract-frames: ffprobe reads a whole video on one core.
+    # Several segments at once, as in nnslr extract-frames.
     folders = sorted((path for path in frames_dir.iterdir() if path.name.isdigit()), key=lambda p: int(p.name))
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         for segment, done, count in pool.map(segment_reads, folders):
