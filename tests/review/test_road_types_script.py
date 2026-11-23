@@ -55,7 +55,7 @@ def run_script(tmp_path: Path, maps: str = 'download', touch: bool = True) -> su
         for name, text in (('osm_maps.py', FAKE_MAPS), ('osm_roads.py', FAKE_ROADS), ('osm_places.py', FAKE_PLACES)):
             (root / 'scripts' / name).write_text(text)
         executables = {
-            root / '.venv' / 'bin' / 'nnslr': '#!/bin/sh\necho "nnslr $1"\n',
+            root / '.venv' / 'bin' / 'nnslr': '#!/bin/sh\necho "nnslr $*"\n',
             # "import shapely" answered yes, the rest is Python.
             root / '.venv' / 'bin' / 'python': f'#!/bin/sh\n[ "$1" = -c ] && exit 0\nexec {sys.executable} "$@"\n',
             # uv run --no-project --with osmium python SCRIPT ...: the script, with this Python.
@@ -82,6 +82,9 @@ def test_a_first_run_without_a_map_downloads_the_maps_and_goes_on(tmp_path):
     assert steps == ['== a. GPS of the drives', '== b. Maps the drives need', '== c. Speed of the drives',
                      '== d. Map roads and car parks near the drives', '== e. Road type of every frame',
                      '== f. Tunnels']
+    assert not any(line.startswith('nnslr localize') for line in lines)
+    gps = f"nnslr gps --all --missing --data-root {tmp_path / 'data'}"
+    assert lines.index(steps[0]) < lines.index(gps) < lines.index(steps[1])
     assert lines.index('Alsace: downloaded') < lines.index('osm_roads ran') < lines.index('osm_places ran')
     assert (tmp_path / 'data' / 'derived' / 'osm' / 'places.jsonl').exists()
     # Every step of the page's bar is reached by the log.

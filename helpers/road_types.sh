@@ -4,10 +4,8 @@
 # and the Server today lane of the drive player, the map as it is today. Nothing learns from it, nothing here touches the
 # reviews of the signs, and the comma never reads any of it.
 #
-#   a. the precise position of the road camera's frames from openpilot.distill's localizer, for the segments without
-#      it (nnslr localize --all; about 20 s of a core a segment, 6 side by side; skipped without distill's .venv),
-#      then the GPS position of the frames of the drives prepared without it or localized since (nnslr gps --all
-#      --missing)
+#   a. the GPS position of the frames of drives prepared without it or localized since (nnslr gps --all --missing).
+#      Use existing localizer tracks where they agree with GPS; do not run the localizer here.
 #   b. the maps the drives need: the Geofabrik extracts that hold a drive's positions and are not in raw/osm yet,
 #      downloaded (scripts/osm_maps.py, at most 5 GB a run; derived/osm/maps.json for Read the map in Data › Drives). Only Geofabrik's
 #      index and the extracts are fetched: no position of the drives leaves the server. A download that fails leaves
@@ -23,10 +21,9 @@
 #      Speed review (reviewer osm; never over a person's mark, removal or check)      (nnslr tunnels --all)
 #
 # usage: helpers/road_types.sh [--again]   (--again: the map roads read again even when nothing is newer)
-# No network but Geofabrik's index once a month and the extracts the drives miss (download.geofabrik.de), uv's first
-# download of osmium and the localizer's GNSS orbits and ionosphere maps of a new day (laika, from comma's gnss-data
-# mirror); about 2 minutes when the map is read, seconds otherwise, plus about a minute for the logs of each new drive
-# and one or two for each map downloaded.
+# Network: Geofabrik's index once a month and the extracts the drives miss (download.geofabrik.de), plus uv's first
+# download of osmium. About 2 minutes when the map is read, seconds otherwise, plus about a minute for the logs of
+# each new drive and one or two for each map downloaded.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DATA="${NNSLR_DATA_ROOT:-$ROOT/data}"
@@ -48,9 +45,6 @@ UV="$(command -v uv || true)"
 if [ -z "$UV" ] && [ -x "$HOME/.local/bin/uv" ]; then UV="$HOME/.local/bin/uv"; fi
 
 echo "== a. GPS of the drives"
-# Without openpilot.distill (or for a segment it cannot use) the frames keep the position of the GPS.
-"$NN" localize --all --data-root "$DATA" < /dev/null \
-    || echo "The localizer did not run for some segments: their frames keep the position of the GPS"
 # A drive whose logs cannot be read keeps no position: it is said, and the others go on.
 "$NN" gps --all --missing --data-root "$DATA" < /dev/null \
     || echo "GPS position not read for some drives: their frames stay without the map's limit"

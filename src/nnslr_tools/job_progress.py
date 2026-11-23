@@ -132,8 +132,7 @@ GITHUB_SAVE_STEPS = (('repository', 'Check the repository on GitHub', 5), ('clon
                      ('copy', 'Copy the networks new or changed', 25), ('push', 'Push to GitHub', 40))
 GITHUB_RESTORE_STEPS = (('clone', 'Bring the copy of GitHub here up to date', 60), ('verify', 'Check the saved files', 15),
                         ('put_back', 'Put back what is missing here', 25))
-# helpers/road_types.sh: openpilot.distill's localizer on the segments new to it (about 20 s of a core each, 6 side by
-# side: some 20 minutes the first time) and the GPS of the drives prepared without it or localized since, the maps the
+# helpers/road_types.sh: GPS positions of drives prepared without them or localized separately since, the maps the
 # drives need (seconds, a minute or two for each map downloaded), the car's speed from the logs (a minute for each new
 # drive), the map roads near the drives (minutes when the map is read again), the map's limit of every frame.
 ROAD_TYPES_STEPS = (('gps', 'Read the GPS of the drives', 10), ('maps', 'Download the maps the drives need', 5),

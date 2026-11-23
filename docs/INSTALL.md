@@ -74,7 +74,7 @@ Adds `pycapnp` and `zstandard` for `nnslr log-metadata`, `nnslr align-route` and
 .venv/bin/nnslr gps --all --missing     # the frames of the localized drives take the localizer's position
 ```
 
-The first run of a day downloads that day's GNSS orbits and ionosphere maps (laika, from comma's public gnss-data mirror on GitHub, no account) into `/tmp/gnss`. Without openpilot.distill's `.venv`, `nnslr localize` says so and the frames keep the position of the GPS, as before. From the portal it runs as step a of **Read the map** (Data › Drives, `helpers/road_types.sh`).
+The first run of a day downloads that day's GNSS orbits and ionosphere maps (laika, from comma's public gnss-data mirror on GitHub, no account) into `/tmp/gnss`. **Read the map** (Data › Drives) does not run the localizer. It uses tracks already available where they agree with GPS, and uses GPS from the logs for the other frames. Its GPS step picks up any newer tracks on the next run.
 
 ### The OpenStreetMap maps (downloaded by themselves)
 
