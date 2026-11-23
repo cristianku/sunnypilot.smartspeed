@@ -893,7 +893,8 @@ watch(() => props.route, () => {
             <button type="button" class="btn small dr-bar-icon" aria-label="On one frame" title="On one frame (→; ⇧→ a second)"
                     @click="stepFrame(1)"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="MARKS.frameOn" fill="currentColor"/></svg></button>
             <button v-if="sharp" type="button" class="btn small" :aria-pressed="sharpOn" aria-label="Full definition when paused"
-                    title="Paused, the frame at the comma's full definition; tap the picture to zoom" @click="sharpOn = !sharpOn">HD</button>
+                    title="Paused, the frame at the comma's full definition; tap the picture to zoom" @click="sharpOn = !sharpOn">{{
+                      sharpOn ? 'HD on' : 'HD off' }}</button>
             <button type="button" class="btn small" :disabled="!change" id="dr-last-change"
                     :title="change ? 'The vision limit last changed to ' + change.kph + ' at ' + clockOf(change.at) : 'No change of the vision limit before'"
                     @click="change && seek(change.at - 2)">Last change</button>
