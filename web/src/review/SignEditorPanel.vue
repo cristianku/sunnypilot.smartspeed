@@ -18,8 +18,13 @@ import RecentLabels from './RecentLabels.vue';
 import StageBar from './StageBar.vue';
 import {state} from './store';
 import {useKeyboard} from './use-keyboard';
+import {stepFrame} from './video';
 
-useKeyboard();
+const props = defineProps<{stepPreview: (direction: number) => boolean}>();
+function step(direction: number): void {
+  if (!props.stepPreview(direction)) stepFrame(direction);
+}
+useKeyboard(step);
 useCarReading();
 // The frame on screen has its working copy, and the selection points at one of its boxes (current.ts
 // ensureCurrentFrame, without opening the first frame of the drive: the player says which frame is open).
@@ -40,7 +45,7 @@ onBeforeUnmount(() => stop?.());
        :data-last-save="state.lastSave ? state.lastSave.key + ' ' + state.lastSave.result : ''">
     <template v-if="row && work">
       <RecentLabels :row="row"/>
-      <StageBar :row="row"/>
+      <StageBar :row="row" :step-video="step"/>
       <CarSection :row="row" :work="work"/>
       <AiSection :row="row"/>
       <Inspector :row="row" :work="work" :recent="false"/>

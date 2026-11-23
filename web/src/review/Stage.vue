@@ -4,7 +4,7 @@
 // read (car.ts; neither takes the pointer) and the box being drawn. The frame's country and what the comma had at that moment are in the bar above
 // it (CarMoment.vue). Under it, the grip that makes it lower on a computer (PhotoGrip.vue). Inside it, the zoom of the
 // selected box (ZoomInset.vue), always in the bottom right corner.
-// The boxes of a frame wait for its photo: they are never drawn on the previous one.
+// The boxes wait for their photo, or for the paused preview to finish seeking to their frame in Speed review.
 import {computed, ref, useTemplateRef, watch} from 'vue';
 import {ai} from './ai';
 import {carAskOf, carDetection, carSignLeft} from './car';
@@ -20,7 +20,7 @@ import type {FrameEdit, FrameRow} from './types';
 import {useScreenSize} from './use-layout';
 import ZoomInset from './ZoomInset.vue';
 
-const props = defineProps<{row: FrameRow; work: FrameEdit}>();
+const props = defineProps<{row: FrameRow; work: FrameEdit; usePreview?: boolean; previewSettled?: boolean}>();
 
 const scene = useTemplateRef<SVGSVGElement>('scene');
 const size = useScreenSize(scene);
@@ -29,7 +29,8 @@ const stage = useTemplateRef<HTMLDivElement>('stage');
 /** The photo that has loaded (or failed): its address and the frame it was loaded for. */
 const loaded = ref<{href: string; key: string} | null>(null);
 watch(() => props.row.preview_path, () => { loaded.value = null; });
-const layersVisible = computed(() => loaded.value !== null && loaded.value.href === props.row.preview_path);
+const layersVisible = computed(() => props.usePreview ? props.previewSettled === true
+  : loaded.value !== null && loaded.value.href === props.row.preview_path);
 const visibility = computed(() => (layersVisible.value ? undefined : {visibility: 'hidden' as const}));
 
 /** The photo has loaded (or failed): show its boxes, and say which frame it is (stage[data-photo-key]). */
@@ -93,10 +94,11 @@ const inset = computed(() => {
   <div ref="stage" class="stage" id="stage" :data-photo-key="loaded?.key ?? ''">
     <svg ref="scene" id="scene" :class="{drawing: state.drawing, dragging: resizing}" xmlns="http://www.w3.org/2000/svg"
          aria-label="Frame with the boxes of the signs" :viewBox="'0 0 ' + row.width + ' ' + row.height"
+         :style="usePreview && !previewSettled ? {pointerEvents: 'none'} : undefined"
          @pointerdown="onPointerDown($event, 'scene')" @pointermove="onPointerMove($event, 'scene')"
          @pointerup="finishDrag($event, 'scene')" @pointercancel="finishDrag($event, 'scene')"
          @touchstart="onTouchStart($event, 'scene')" @click="onSceneClick">
-      <image id="photo" x="0" y="0" preserveAspectRatio="none" :href="row.preview_path" :width="row.width"
+      <image v-if="!usePreview" id="photo" x="0" y="0" preserveAspectRatio="none" :href="row.preview_path" :width="row.width"
              :height="row.height" @load="photoDone($event, false)" @error="photoDone($event, true)"></image>
       <g id="hintLayer" :style="visibility">
         <template v-for="(hint, i) in drawing.hints" :key="i">

@@ -206,6 +206,7 @@ function seek(seconds: number): void {
   const at = plainVideo.value ? cursor.value : videoTime.value;
   seekTarget.value = at;
   if (at !== null) {
+    if (Math.abs(element.currentTime - at) > 1e-4) stillAt.value = null;
     element.currentTime = at;
     // The frame of that time at once, should a browser not call back for a seek while paused.
     present(at);
@@ -285,21 +286,30 @@ function pause(): void {
   player.value?.pause();
 }
 const toggle = (): void => (playing.value ? pause() : play());
-/** One frame of the video on or back, paused (← →; ⇧ ← → is a second, seek): to the middle of that frame, as a time on
- * the edge between two shows either. Where the video has no picture of the time, a frame's time of the logs. */
-function stepFrame(direction: number): void {
-  stepSeconds = false;
-  pause();
+/** Step to the middle of the adjacent video frame. The embedded editor can require a frame it knows how to edit;
+ * if the preview cannot show one, leave the cursor alone so the editor can fall back to its own navigation. */
+function stepFrame(direction: number, canEdit?: (segment: number, frame: number) => boolean): boolean {
+  if (canEdit && (!ready.value || videoGone.value)) return false;
   const at = plainVideo.value ? cursor.value : videoTime.value;
   if (player.value && at !== null) {
     const target = (Math.floor(at * FPS + 1e-3) + direction + 0.5) / FPS;
     const logs = plainVideo.value ? target : logTimeOf(segments.value, target);
+    if (canEdit) {
+      const next = rawFrameOf(video.value?.index, target);
+      if (!next || !canEdit(next.segment, next.frame) || logs === null || clamp(logs) !== logs) return false;
+    }
     if (logs !== null) {
+      stepSeconds = false;
+      pause();
       seek(logs);
-      return;
+      return true;
     }
   }
+  if (canEdit) return false;
+  stepSeconds = false;
+  pause();
   seek(cursor.value + direction / FPS);
+  return true;
 }
 // -- the full definition, standing still ------------------------------------------------------------------------------
 // The switch HD, where the page offers it (sharp): while the video stands still (paused, a frame on or back), the frame on
@@ -682,6 +692,12 @@ const shownFrame = computed(() => {
   const at = plainVideo.value ? cursor.value : videoTime.value;
   return at === null ? null : rawFrameOf(video.value?.index, at);
 });
+/** Do not draw an edit overlay on the previous picture while the browser seeks to the chosen frame. */
+const previewSettled = computed(() => {
+  if (!shownFrame.value || stillAt.value === null) return false;
+  const frame = rawFrameOf(video.value?.index, stillAt.value);
+  return frame?.segment === shownFrame.value.segment && frame.frame === shownFrame.value.frame;
+});
 /** The time of the logs that shows frame `frame` of a minute of the road video (the middle of it, as a step does), or
  * null where the drive's video does not have it. */
 function timeOfFrame(segment: number, frame: number): number | null {
@@ -699,7 +715,7 @@ const videoGone = computed(() => video.value?.state === 'failed' || video.value?
 function scrub(on: boolean): void {
   scrubbing.value = on;
 }
-defineExpose({seek, pause, scrub, mapRunAt, mapEdges, playing, shownFrame, timeOfFrame, videoGone});
+defineExpose({seek, stepFrame, pause, scrub, mapRunAt, mapEdges, playing, shownFrame, timeOfFrame, videoGone});
 /** The frame of the comma's road video the browser presents, playing or standing still (its minute and its frame k): what
  * a page draws over the picture at 20 frames a second (emitted as `frame`). From the presented frame's own time
  * (requestVideoFrameCallback, also after a seek or a step while paused) where the browser has it, else from the video's
@@ -863,7 +879,8 @@ watch(() => props.route, () => {
           <img v-if="sharpShown" :src="shownSharp!" class="dr-sharp" :class="{zoomed: zoomAt}" alt="" draggable="false"
                :style="zoomAt ? {transform: 'scale(2.5)', transformOrigin: zoomAt.x + '% ' + zoomAt.y + '%'} : undefined"
                :title="zoomAt ? 'Tap to see the whole picture' : 'Tap to zoom in here'" @click.stop="zoomSharp">
-          <slot name="picture" :shown="ready && (plainVideo || videoTime !== null)" :zoomed="sharpShown && zoomAt !== null"></slot>
+           <slot name="picture" :shown="ready && (plainVideo || videoTime !== null)" :zoomed="sharpShown && zoomAt !== null"
+                 :use-preview="!sharpOn" :preview-settled="previewSettled"></slot>
           <span v-if="sharpTag" class="dr-sharp-tag" aria-live="polite">{{ sharpTag }}</span>
           <div v-if="ready && videoProblem" class="dr-stage-note">{{ videoProblem }}</div>
           <div v-else-if="ready && hasLogs && videoTime === null" class="dr-stage-note">No picture of this time: the logs go on.</div>

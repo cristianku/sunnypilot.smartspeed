@@ -70,7 +70,7 @@ export function popoverHasKeys(target: Element | null): boolean {
   return [...document.querySelectorAll(POPOVERS)].some((element) => element.getClientRects().length > 0);
 }
 
-export function useKeyboard(): void {
+export function useKeyboard(stepVideo: (direction: number) => void = stepFrame): void {
   // The button last pressed with the mouse or a finger; Tab moves the focus elsewhere and forgets it.
   let pointerButton: Element | null = null;
   const onPointerDown = (event: PointerEvent): void => {
@@ -238,12 +238,12 @@ export function useKeyboard(): void {
       case 'ArrowLeft':
         event.preventDefault();
         if (event.shiftKey) stepSecond(-1);
-        else stepFrame(-1);
+        else stepVideo(-1);
         break;
       case 'ArrowRight':
         event.preventDefault();
         if (event.shiftKey) stepSecond(1);
-        else stepFrame(1);
+        else stepVideo(1);
         break;
       case 'Enter':
         event.preventDefault();

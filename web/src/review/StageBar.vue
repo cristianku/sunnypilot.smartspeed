@@ -19,7 +19,7 @@ import {hintsOf, report, state} from './store';
 import ReviewFilters from './ReviewFilters.vue';
 import type {FrameRow} from './types';
 
-const props = defineProps<{row: FrameRow}>();
+const props = withDefaults(defineProps<{row: FrameRow; stepVideo?: (direction: number) => void}>(), {stepVideo: stepFrame});
 const guest = isGuest();
 
 const pillClass = computed(() => {
@@ -72,10 +72,10 @@ function hintsSwitched(event: Event): void {
       <button type="button" class="btn icon second" id="prevSecond" aria-label="A second back" title="A second back, a whole cell (Shift ←)"
               :disabled="!position.canPrevSecond" @click="stepSecond(-1)"><span class="nav-glyph">«</span><kbd class="nav-key">⇧←</kbd></button>
       <button type="button" class="btn icon" id="prev" aria-label="Previous frame" title="Previous frame (←) · a second back: Shift ←"
-              :disabled="!position.canPrev" @click="stepFrame(-1)"><span class="nav-glyph">‹</span><kbd class="nav-key">←</kbd></button>
+              :disabled="!position.canPrev" @click="stepVideo(-1)"><span class="nav-glyph">‹</span><kbd class="nav-key">←</kbd></button>
       <span class="pos" id="pos">{{ thousands(position.index + 1) }} / {{ thousands(position.length) }}</span>
       <button type="button" class="btn icon" id="next" aria-label="Next frame" title="Next frame (→) · a second on: Shift →"
-              :disabled="!position.canNext" @click="stepFrame(1)"><span class="nav-glyph">›</span><kbd class="nav-key">→</kbd></button>
+              :disabled="!position.canNext" @click="stepVideo(1)"><span class="nav-glyph">›</span><kbd class="nav-key">→</kbd></button>
       <button type="button" class="btn icon second" id="nextSecond" aria-label="A second on" title="A second on, a whole cell (Shift →)"
               :disabled="!position.canNextSecond" @click="stepSecond(1)"><span class="nav-glyph">»</span><kbd class="nav-key">⇧→</kbd></button>
     </div>

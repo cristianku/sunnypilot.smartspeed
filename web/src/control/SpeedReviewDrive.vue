@@ -668,6 +668,11 @@ const playerKey = computed(() => {
 });
 /** The editor is on screen: the player stands on the frame it has open. */
 const onFrame = computed(() => playerKey.value !== null && playerKey.value === editState.currentKey && editRow.value !== null);
+/** When both views are on the same frame, use the preview's own seek rather than decoding a GOP on the server. */
+function stepSignFrame(direction: number): boolean {
+  return onFrame.value && (player.value?.stepFrame(direction,
+    (segment, frame) => frameKeyAt(segment, frame) !== null) ?? false);
+}
 /** Where the player has the frame the editor has open (seconds of the drive), null where it has not. */
 const timeOfEdited = computed(() => {
   const row = editRow.value;
@@ -1037,8 +1042,9 @@ function worksIn(from: number, to: number) {
       <span v-if="!speedOff" class="dr-box sr-box-label" :class="{empty: label === null}" title="ANSWER: your dashboard speed, or your block where there is one; a dash where openpilot or the cruise held the speed"><small>ANSWER</small>
         <b>{{ label ?? '–' }}</b></span>
     </template>
-    <template #picture="{shown, zoomed}">
-      <SignEditorStage v-if="editing && (onFrame && shown || alone) && !zoomed" :class="{'sr-editor-alone': alone}"/>
+    <template #picture="{shown, zoomed, usePreview, previewSettled}">
+      <SignEditorStage v-if="editing && (onFrame && shown || alone) && !zoomed" :class="{'sr-editor-alone': alone}"
+                       :use-preview="usePreview && !alone" :preview-settled="previewSettled"/>
       <svg v-else-if="showSigns && shown && !zoomed && pictureBoxes && pictureBoxes.boxes.length"
            class="sr-sign-boxes" :viewBox="`0 0 ${pictureBoxes.width} ${pictureBoxes.height}`"
            preserveAspectRatio="xMidYMid meet" aria-hidden="true">
@@ -1163,7 +1169,7 @@ function worksIn(from: number, to: number) {
             <span class="sr-ai-count" title="Frames of this drive reviewed by the AI, violet on the Signs lane">{{ aiFrames.length ? (aiAt ? aiAt + ' / ' : '') + aiFrames.length + ' AI' : 'No AI frame' }}</span>
             <button type="button" class="btn small" id="sr-ai-after" :disabled="aiAfter < 0" title="The next frame reviewed by the AI (])" @click="goAi(1)">AI ›</button>
           </div>
-          <SignEditorPanel v-if="onFrame || alone"/>
+          <SignEditorPanel v-if="onFrame || alone" :step-preview="stepSignFrame"/>
           <p v-else-if="player?.playing" class="dr-hint" id="sr-editor-playing">Playing. Pause on a frame (Space) to edit its
             signs; ← → then go frame by frame.</p>
           <p v-else class="dr-hint" id="sr-editor-none">No frame to review at this moment of the drive.</p>

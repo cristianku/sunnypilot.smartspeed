@@ -4,10 +4,12 @@
 // (Stage.vue, pointer.ts). A click on it is its own: it never starts the player.
 import {row, work} from './current';
 import Stage from './Stage.vue';
+
+defineProps<{usePreview: boolean; previewSettled: boolean}>();
 </script>
 
 <template>
   <div class="sign-editor sr-editor-stage" @click.stop>
-    <Stage v-if="row && work" :row="row" :work="work"/>
+    <Stage v-if="row && work" :row="row" :work="work" :use-preview="usePreview" :preview-settled="previewSettled"/>
   </div>
 </template>
