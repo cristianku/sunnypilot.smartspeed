@@ -1,8 +1,8 @@
 // Where the next training of the cutter, of applicability or of the brain starts, kept once for its section (applicability's
 // in Models › Review helpers, ApplicabilityCard.vue) and for its step of Train › Pipeline (the same choice in both on Train;
 // applicability's card on Models keeps its own, on the same default): a finished version of its role in Models, whose weights it goes on
-// from (the one in use, until another is chosen), or its usual start (random weights for SignNet, ImageNet for
-// applicability and the brain; the choice while none is in use). An applicability run is one choice: each of its
+// from (the recommended Brain when available, otherwise the one in use, until another is chosen), or its usual start
+// (random weights for SignNet, ImageNet for applicability and the brain). An applicability run is one choice: each of its
 // networks goes on from its own of that run. A brain is one seed: its three seeds go on from it; it learnt on the
 // brain's frozen split, and the server refuses one stepped otherwise (nnslr_tools.brain_train.brain_start). One that
 // took your pedals and the car's speed is a start too: the new one leaves those inputs out.
@@ -21,6 +21,8 @@ const NAME: Record<StartRole, string> = {cutter: 'SignNet', decider: 'Applicabil
 const POOL_WORDS = {grid: 'a grid', mean: 'a mean'} as const;
 const POOL_TITLE = {grid: 'Grid', mean: 'Mean'} as const;
 export const FRESH_START = 'fresh';
+// The default for Smartspeed's Grid training setup (#126). Other installations may not have this run.
+const RECOMMENDED_BRAIN_START = 'brain:2026-11-20_0921-brain-s0/brain';
 
 export function useNetworkStart(role: StartRole, status: Ref<PanelStatus | null>,
   versionsOf: (role: ModelRole) => readonly ModelVersion[] | undefined, pool?: () => string) {
@@ -41,6 +43,10 @@ export function useNetworkStart(role: StartRole, status: Ref<PanelStatus | null>
       count: items.length, inUse: items.some((item) => item.in_use)}))
       .sort((a, b) => Number(b.inUse) - Number(a.inUse));
   });
+  const recommended = computed(() => role === 'brain'
+    ? starts.value.find(({version}) => version.role === 'brain' && version.id === RECOMMENDED_BRAIN_START
+      && version.pool === 'grid')?.version.id
+    : undefined);
   /** Its kind and when: "SignNet 896 × 288 29 Oct 14:02", "Brain Grid, seed 1 10 Nov 01:11". */
   const titleOf = (version: ModelVersion): string => (role === 'decider' ? NAME[role]
     : version.role === 'brain' ? 'Brain ' + POOL_TITLE[version.pool ?? 'grid'] + ', seed ' + (version.seed ?? '?')
@@ -59,17 +65,18 @@ export function useNetworkStart(role: StartRole, status: Ref<PanelStatus | null>
     ...starts.value.map(({version, count, inUse}) => {
       const split = splitOf(version);
       const off = version.role === 'brain' ? version.test?.mean_error_kph ?? null : null;
-      return {key: version.id, title: titleOf(version), short: titleOf(version), badge: inUse ? 'In use' : undefined,
+      return {key: version.id, title: titleOf(version), short: titleOf(version),
+        badge: inUse ? 'In use' : version.id === recommended.value ? 'Recommended' : undefined,
         sub: [split ? SPLIT_WORDS[split] : '', role === 'decider' ? plural(count, 'network') : '',
           takesTheDriver(version) ? 'with your pedals and speed' : '',
           off === null ? '' : off.toFixed(1) + ' km/h off on the test'].filter(Boolean).join(' · ')};
     }),
   ]);
-  /** The choice made here (null: none yet, the one in use). */
+  /** The choice made here (null: none yet, use the default). */
   const picked = ref<string | null>(null);
   const key = computed({
     get: (): string => picked.value === FRESH_START || starts.value.some((item) => item.version.id === picked.value)
-      ? picked.value! : starts.value.find((item) => item.inUse)?.version.id ?? FRESH_START,
+      ? picked.value! : recommended.value ?? starts.value.find((item) => item.inUse)?.version.id ?? FRESH_START,
     set: (value: string) => { picked.value = value; },
   });
   const version = computed(() => starts.value.find((item) => item.version.id === key.value)?.version ?? null);
