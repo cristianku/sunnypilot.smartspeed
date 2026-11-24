@@ -418,6 +418,11 @@ def test_a_known_failure_is_one_plain_sentence():
            '== finito con codice 2\n')
     failed = progress('measure_proposer', 'failed', oom)
     assert failed['failure'].startswith('The GPU ran out of memory') and 'request.json' in failed['last_line']
+    assert 'another job' not in failed['failure']
+    exceeds_card = ('torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 38.53 GiB. '
+                    'GPU 0 has a total capacity of 32491.52 MiB of which 31.43 GiB is free.\n')
+    assert failure_text(exceeds_card) == ('The GPU ran out of memory: one allocation requested 38.53 GiB, '
+                                         'more than the card’s total 32491.52 MiB.')
     assert failure_text('ERROR: per dividere il dataset servono almeno 5 route (o luoghi) indipendenti\n').startswith('More reviewed')
     assert failure_text('ssh: connect to host comma port 22: Connection refused\n').startswith('The comma did not answer')
     # Publish on Hugging Face with a login that may not make a repository: what to do, not a traceback.

@@ -33,8 +33,8 @@ from nnslr_tools import road_type_data as data
 from nnslr_tools import onnx_device
 from nnslr_tools.brain_net import build_brain_net, car_weights, number_path_of, picture_kind_of
 from nnslr_tools.brain_targets import BRAIN_INPUTS, METRES_SCALE, brain_sizes, dataset, inputs_sha256, pack_inputs
-from nnslr_tools.brain_train import CHECKPOINT, CHUNK, _pictures, predict
-from nnslr_tools.road_type_net import FrameStore, _torch, gru_step
+from nnslr_tools.brain_train import CHECKPOINT, CHUNK, BrainFrameStore, _pictures, predict
+from nnslr_tools.road_type_net import _torch, gru_step
 
 BRAIN_FILE = 'brain.onnx'
 INPUT_NAMES = ['image', 'extra', 'hidden']
@@ -125,7 +125,7 @@ def table_of(model) -> list[int]:
     return [int(round(value)) for value in model.class_kph.detach().cpu().tolist()]
 
 
-def drive_rollout(model, step_run, drive: dict, store: FrameStore, device: str = 'cpu', log=None) -> dict:
+def drive_rollout(model, step_run, drive: dict, store: BrainFrameStore, device: str = 'cpu', log=None) -> dict:
     """A whole drive by step_run(image, extra, hidden) -> the step's outputs (speed logits first, hidden_out last), numpy,
     against brain_train.predict: the frames and how many of them say another speed, or, for a brain that has it, another
     limit ahead (a frame where ONNX scores both classes within TIE is a tie, counted apart). The memory
@@ -181,7 +181,7 @@ def drive_rollout(model, step_run, drive: dict, store: FrameStore, device: str =
 
 def rollout_drive(root: Path, merged_of, groups: tuple[str, ...], route: str | None = None, device: str = 'cpu',
                   rate: float = 1.0, networks: dict | None = None, other_road_boxes: bool = False,
-                  sizes: dict | None = None) -> tuple[dict, FrameStore]:
+                  sizes: dict | None = None) -> tuple[dict, BrainFrameStore]:
     """A drive of the labels at the brain's rate, with its pictures: route, or the one with the most frames in test. With
     no route, among the drives the brain learns from (training_routes), the ones with their pictures (a drive added after
     the training has none until the next one: it is passed by). A drive without the brain's pictures is refused: the
@@ -200,7 +200,7 @@ def rollout_drive(root: Path, merged_of, groups: tuple[str, ...], route: str | N
                          f"nnslr road-type-signs --labelled {names}")
     drive = max(pictured, key=lambda item: sum(partition == 'test' for partition in item['partitions']))
     drive['extra'] = pack_inputs(drive['inputs'], groups, sizes)
-    return drive, FrameStore(_pictures(root, [drive], dry_run=False, log=lambda text: None), device)
+    return drive, BrainFrameStore(_pictures(root, [drive], dry_run=False, log=lambda text: None), device)
 
 
 def _export(step, example: tuple, output: Path, names: list[str] = OUTPUT_NAMES) -> None:

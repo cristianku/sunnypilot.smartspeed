@@ -423,9 +423,8 @@ def run_brains(root: Path, runs: list[str], merged_of, *, device, log=print) -> 
     The drives that could not run, for the exit code."""
     from nnslr_tools.brain_export import load_brain
     from nnslr_tools.brain_targets import BRAIN_INPUTS, brain_sizes, inputs_sha256, pack_inputs
-    from nnslr_tools.brain_train import CHUNK, _pictures, predict
+    from nnslr_tools.brain_train import CHUNK, BrainFrameStore, _pictures, predict
     from nnslr_tools.model_roles import BRAIN_WEIGHTS
-    from nnslr_tools.road_type_net import FrameStore
     from nnslr_tools.road_type_signs import load_signs
     from nnslr_tools.sign_networks import of_brain
     routes = [route for route in sorted(certified(root)) if frames_ready(root, route)]
@@ -473,7 +472,7 @@ def run_brains(root: Path, runs: list[str], merged_of, *, device, log=print) -> 
                     found = brain_drive(root, route, merged, rate, folders[run], every)
                     if not found['pictures']:
                         raise ValueError("the brain's pictures were not made: nnslr road-type-signs --certified")
-                    stores[key] = FrameStore(_pictures(root, [found], dry_run=False, log=log), device)
+                    stores[key] = BrainFrameStore(_pictures(root, [found], dry_run=False, log=log), device)
                     drives[key] = found
                 drive, store = drives[key], stores[key]
                 # Each brain its own kinds of other sign (brain_sizes): the drive is shared by the brains of a set.

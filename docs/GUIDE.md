@@ -495,3 +495,7 @@ To change a page: edit `web/src` (or the template), run `helpers/build_web.sh`, 
 In **Speed Review › Road conditions**, select **Junction passed**. Go to the first frame after clearing the junction and press **Mark here** (or **W**). **Read the map** prepares suggestions: use the suggestion arrows or tap a tick on the Answer timeline, then confirm it, adjust the video position and mark there, or dismiss it. Use **Checked to here** after reviewing the section to label the unmarked moments there as negative examples. No suggestion teaches the Brain unless confirmed.
 
 A mark teaches the Brain a one-second pulse starting at the selected frame (four steps at 4 Hz) when **Train › Brain › Road conditions** is enabled. It does not end a speed limit, change the speed answer, or add a map input to the Brain or the comma.
+
+### Brain training memory
+
+The Brain reads its prepared pictures from disk and sends only the current sequence to the V100, up to 256 frames at its default settings. This keeps all drives, the 256 × 144 input at 4 Hz, and the same sequence boundaries; no change in portal settings is needed.

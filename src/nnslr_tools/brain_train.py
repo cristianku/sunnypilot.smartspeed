@@ -131,7 +131,7 @@ from nnslr_tools.brain_targets import (INPUT_SIZES, LEFT_OUT, MAP_GROUP, METRES_
                                        training_counts_text, type_weights, wet_in_train, without_map)
 from nnslr_tools.road_types import ROAD_TYPES
 from nnslr_tools.speed_review import EVENT_KINDS
-from nnslr_tools.road_type_net import FEATURES, FrameStore, HIDDEN, LEARNING_RATE, WEIGHT_DECAY, _augment, _print, _torch
+from nnslr_tools.road_type_net import FEATURES, HIDDEN, LEARNING_RATE, WEIGHT_DECAY, _augment, _print, _torch
 from nnslr_tools.road_type_signs import load_pictures
 
 EPOCHS = 40
@@ -161,7 +161,7 @@ def learned_inputs(map_limit: bool = False) -> tuple[str, ...]:
     return LEARNED_INPUTS + (('map_limit',) if map_limit else ())
 
 
-def _piece(drive: dict, first: int, last: int, store: FrameStore | None, device):
+def _piece(drive: dict, first: int, last: int, store: BrainFrameStore | None, device):
     torch = _torch()
     images = (store.batch([(drive['route'], list(range(first, last)))]) if store is not None
               else torch.zeros((1, last - first, 3, 1, 1), device=device))
@@ -205,7 +205,7 @@ def _same_augment(torch, images, seed: int, device):
         return _augment(torch, images)
 
 
-def train_epoch(model, optimizer, drives: list[dict], store: FrameStore | None, *, chunk: int, rng: random.Random, device,
+def train_epoch(model, optimizer, drives: list[dict], store: BrainFrameStore | None, *, chunk: int, rng: random.Random, device,
                 augment: bool = True, steps: int | None = None, road_pos_weight=None, sign_pos_weight=None) -> float:
     """One pass over the train frames: the mean error of its steps. road_pos_weight: road_pos_weight's, a tensor on
     device (kinds,) in the order of the kinds, or None (every kind 1). sign_pos_weight: applicability_pos_weight's, a
@@ -272,7 +272,7 @@ def _stretches_out_of_train(partitions: list[str]) -> set[int]:
     return {at for at in range(1, len(partitions)) if partitions[at] != 'train' and partitions[at - 1] == 'train'}
 
 
-def predict(model, drive: dict, store: FrameStore | None, *, chunk: int, device, cold: bool = False) -> dict:
+def predict(model, drive: dict, store: BrainFrameStore | None, *, chunk: int, device, cold: bool = False) -> dict:
     """What the network says along a whole drive, as on the car: {'kph': per frame, the km/h of its class in the network's
     own table (class_kph), 'works': chance per frame, or None, 'road': chance per frame and kind of road, or None, 'types':
     chance per frame and road type (road_types.ROAD_TYPES), or None, 'applicability': the chance that the speed sign of each slot of sign_slots is of another road (frames,
@@ -584,28 +584,47 @@ def _short(drive: dict, length: int) -> dict:
             'cuts': {at - first for at in drive['cuts'] if first < at < first + length}}
 
 
+class BrainFrameStore:
+    """Stage one batch of uint8 pictures from disk and normalize it on the model's device, without a GPU image bank."""
+
+    def __init__(self, arrays: dict, device):
+        if not arrays:
+            raise ValueError('no pictures')
+        self.arrays, self.device = arrays, device
+
+    def batch(self, route_positions: list[tuple[str, list[int]]]):
+        """(B, T, 3, H, W) float in [0, 1], in the same order as the requested positions."""
+        torch = _torch()
+        rows = [self.arrays[route][positions] for route, positions in route_positions]
+        pixels = rows[0][None] if len(rows) == 1 else np.stack(rows)
+        return torch.from_numpy(pixels).to(self.device).permute(0, 1, 4, 2, 3).float().div_(255)
+
+
 class _BrainPictures:
-    """The brain's pictures of a drive at RATE_HZ, read only when FrameStore copies them: one drive in memory at a time."""
+    """A drive's RATE_HZ pictures, read in pieces from the memory-mapped segment files."""
 
     def __init__(self, root: Path, drive: dict, dry_run: bool):
         self.root, self.drive, self.dry_run = root, drive, dry_run
+        self._segment = None
+        self._pixels = None
 
     def __len__(self) -> int:
         return len(self.drive['frames'])
 
-    def __array__(self, *_args, **_options) -> np.ndarray:
-        """uint8 (frames, H, W, 3): the rows of the segments' pictures (road_type_signs.picture_path), zeros where one is
-        missing; in a dry run, a frame without its picture has the one of its second (the 1 Hz PNG)."""
-        frames = self.drive['frames']
+    def __getitem__(self, positions: list[int]) -> np.ndarray:
+        """The selected rows, in order; keep at most the last mapped segment open per drive."""
+        frames = [self.drive['frames'][pos] for pos in positions]
         found = np.zeros((len(frames), data.FRAME_HEIGHT, data.FRAME_WIDTH, 3), dtype=np.uint8)
         segments: dict[int, list[int]] = {}
         for at, frame in enumerate(frames):
             segments.setdefault(frame['segment'], []).append(at)
         for segment, rows in segments.items():
-            pictures = load_pictures(self.root, self.drive['route'], segment)
-            kept = [at for at in rows if frames[at]['present']] if pictures is not None else []
+            if segment != self._segment:
+                self._pixels = load_pictures(self.root, self.drive['route'], segment)
+                self._segment = segment
+            kept = [at for at in rows if frames[at]['present']] if self._pixels is not None else []
             if kept:
-                found[kept] = pictures[[frames[at]['picture'] for at in kept]]
+                found[kept] = self._pixels[[frames[at]['picture'] for at in kept]]
             if self.dry_run:
                 for at in set(rows) - set(kept):
                     if Path(frames[at]['image']).is_file():
@@ -614,7 +633,7 @@ class _BrainPictures:
 
 
 def _pictures(root: Path, drives: list[dict], *, dry_run: bool, log) -> dict:
-    """{route: uint8 (frames, H, W, 3)} for FrameStore: at RATE_HZ the brain's pictures (_BrainPictures); at 1 Hz the frame
+    """Indexable uint8 pictures by route: at RATE_HZ the brain's pictures (_BrainPictures); at 1 Hz the frame
     cache (made when missing), or from the PNGs for a dry run, nothing written."""
     brain = {drive['route']: _BrainPictures(root, drive, dry_run) for drive in drives if drive.get('rate', 1.0) == RATE_HZ}
     drives = [drive for drive in drives if drive['route'] not in brain]
@@ -625,7 +644,7 @@ def _pictures(root: Path, drives: list[dict], *, dry_run: bool, log) -> dict:
                                                        np.zeros((data.FRAME_HEIGHT, data.FRAME_WIDTH, 3), dtype=np.uint8)
                                                        for frame in drive['frames']]) for drive in drives}}
     paths = data.build_frame_cache(root, {drive['route']: drive['frames'] for drive in drives}, log=log)
-    return {**brain, **{route: np.load(path) for route, path in paths.items()}}
+    return {**brain, **{route: np.load(path, mmap_mode='r') for route, path in paths.items()}}
 
 
 def _works_needs_both(drives: list[dict], log) -> None:
@@ -691,7 +710,7 @@ def _types_in_train(drives: list[dict], log) -> None:
             f"{'them' if len(bare) > 1 else 'it'} is learned. Read the map in Data › Prepare.")
 
 
-def _swapped_measure(model, drives: list[dict], answers: list[dict], partition: str, groups: tuple[str, ...], store: FrameStore | None, *,
+def _swapped_measure(model, drives: list[dict], answers: list[dict], partition: str, groups: tuple[str, ...], store: BrainFrameStore | None, *,
                      chunk: int, device) -> dict:
     """follow_the_sign on the frames of a partition whose number was swapped, and how many answers moved: see the module's
     text."""
@@ -976,7 +995,9 @@ def train_brain(data_root: Path, run_dir: Path, merged_of, *, pool: str = 'grid'
             f'{ROAD_EVENT_POS_WEIGHT_MAX:.0f}): '
             + ', '.join(f'{kind} {road_lift[kind]:.1f}' for kind in kinds if kind in EVENT_KINDS))
     # Keep the same dataset and split for the comparison; only the brain's image features are ablated.
-    store = FrameStore(_pictures(root, drives, dry_run=dry_run, log=log), device) if picture else None
+    store = BrainFrameStore(_pictures(root, drives, dry_run=dry_run, log=log), device) if picture else None
+    if store is not None:
+        log(f'Brain pictures: streaming up to {chunk} frames at a time to {device}, never the whole drive set.')
     # A brain that learns the map's limit has its path straight to the answer (brain_net: trust_map).
     model = build_brain_net(groups, pool=pool, works=works, pretrained=not dry_run, road_kinds=len(kinds),
                             road_types=len(ROAD_TYPES) if types else 0, map_path=map_limit,

@@ -302,11 +302,14 @@ JSON_LINE = re.compile(r'^(?!\[\d+/\d+\] )(?:[{}\[\]"]|(?:-?\d[\d.eE+-]*|true|fa
 
 # Lines a library prints after its error, pointing to its documentation: they say nothing of what went wrong.
 HINT_LINE = re.compile(r'^(Search for `|For debugging consider passing|Compile with `TORCH_USE_CUDA_DSA`)')
+GPU_ALLOCATION = re.compile(r'Tried to allocate (\d+(?:\.\d+)?) (bytes|KiB|MiB|GiB)[^\n]*?'
+                            r'total capacity of (\d+(?:\.\d+)?) (bytes|KiB|MiB|GiB)')
+GPU_UNITS = {'bytes': 1, 'KiB': 1024, 'MiB': 1024**2, 'GiB': 1024**3}
 # The failures seen in the logs, each with what the page says instead of the exit code and the paths (the log, with
 # them, stays in Details). The first that matches the end of the log wins.
 FAILURES = (
     (re.compile(r'CUDA out of memory|CUDA error: out of memory|OutOfMemoryError|OOM on device'),
-     'The GPU ran out of memory: another job or program was using it. Free the GPU, then try again.'),
+     'The GPU ran out of memory. Details shows the requested allocation and any free memory reported.'),
     (re.compile(r'No space left on device'), 'The disk is full: free some space, then try again.'),
     # Killed by a signal 9 (bash: "Killed", the wrapper: code 137): on this server the kernel's OOM killer, when the
     # container ran out of memory (#60).
@@ -384,6 +387,12 @@ def failure_text(text: str) -> str:
     """What went wrong in one plain sentence, when the end of the log shows a known failure (FAILURES); ''
     otherwise."""
     tail = '\n'.join(text.splitlines()[-FAILURE_LINES:])
+    allocation = GPU_ALLOCATION.search(tail)
+    if allocation:
+        wanted, unit, capacity, gpu_unit = allocation.groups()
+        if float(wanted) * GPU_UNITS[unit] > float(capacity) * GPU_UNITS[gpu_unit]:
+            return (f'The GPU ran out of memory: one allocation requested {wanted} {unit}, '
+                    f'more than the card’s total {capacity} {gpu_unit}.')
     return next((sentence for pattern, sentence in FAILURES if pattern.search(tail)), '')
 
 

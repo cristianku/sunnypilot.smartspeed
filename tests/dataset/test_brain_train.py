@@ -1353,7 +1353,7 @@ def test_the_export_checks_the_brain_along_a_drive_it_learnt_from_with_its_pictu
     monkeypatch.setattr(brain_export, 'dataset', dataset)
     monkeypatch.setattr(brain_export, 'pack_inputs', lambda _inputs, _groups, *_sizes: None)
     monkeypatch.setattr(brain_export, '_pictures', lambda *_args, **_options: None)
-    monkeypatch.setattr(brain_export, 'FrameStore', lambda pictures, device: (pictures, device))
+    monkeypatch.setattr(brain_export, 'BrainFrameStore', lambda pictures, device: (pictures, device))
     assert brain_export.rollout_drive(tmp_path, None, ())[0]['route'] == 'r1'
     brain_export.rollout_drive(tmp_path, None, (), 'r1', other_road_boxes=True)
     assert asked == [None, ['r1']]

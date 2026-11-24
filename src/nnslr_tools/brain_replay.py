@@ -610,8 +610,7 @@ def run_replays(root, run_dir, merged_of, *, device, partitions=('validation', '
 
     from nnslr_tools.brain_export import load_brain
     from nnslr_tools.brain_targets import brain_sizes, dataset
-    from nnslr_tools.brain_train import CHECKPOINT, ROUTES, _pictures
-    from nnslr_tools.road_type_net import FrameStore
+    from nnslr_tools.brain_train import CHECKPOINT, ROUTES, BrainFrameStore, _pictures
     from nnslr_tools.sign_networks import of_brain
     root, run_dir = Path(root), Path(run_dir)
     result = json.loads((run_dir / 'result.json').read_text(encoding='utf-8'))
@@ -632,8 +631,7 @@ def run_replays(root, run_dir, merged_of, *, device, partitions=('validation', '
     for partition in partitions:
         drives = [drive for drive in every if partition in set(drive['partitions'])]
         log(f'== {partition}: {len(drives)} drives with {partition} frames ==')
-        # The pictures of one partition at a time on the card (a drive's whole video at 4 Hz, about 110 kB a frame).
-        store = FrameStore(_pictures(root, drives, dry_run=False, log=log), device) if model.picture else None
+        store = BrainFrameStore(_pictures(root, drives, dry_run=False, log=log), device) if model.picture else None
         results[partition] = _replay_partition(model, drives, store, groups, table, baseline, type_baseline, partition,
                                                run_dir, device=device, log=log)
         del store
