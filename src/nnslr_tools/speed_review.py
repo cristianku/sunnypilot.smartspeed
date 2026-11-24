@@ -93,15 +93,19 @@ MAX_NOTE = 500
 # A block shorter than this is no stretch of road: a slip of the finger.
 MIN_BLOCK_SECONDS = 1
 WORKS_TAPS = ('start', 'end', 'remove', 'checked')
+JUNCTION_PASSED = 'junction_passed'
+JUNCTION_TAPS = ('passed', 'dismiss', 'remove', 'checked')
+JUNCTION_MARK_NS = NS
+JUNCTION_MATCH_NS = NS
 # The kinds of road there are before a person adds one: (kind, label), in the order the page and the brain take them.
 # Seeded at every opening (INSERT OR IGNORE): a kind added here reaches a store made before, after the kinds it has.
 FIRST_ROAD_KINDS = (('narrow', 'Narrow road'), ('country', 'Country road'), ('gravel', 'Gravel road'), ('potholes', 'Potholes'),
                     ('speed_bump', 'Speed bump'), ('person_crossing', 'Person crossing'),
-                    ('vehicle_crossing', 'Vehicle crossing'))
+                    ('vehicle_crossing', 'Vehicle crossing'), (JUNCTION_PASSED, 'Junction passed'))
 # The kinds that are an event of a few seconds, not a stretch of road: a person or a vehicle crossing our path (#112).
 # Marked, kept and checked as every kind; the brain's road_head learns them with their rare frames lifted
 # (brain_train.road_pos_weight).
-EVENT_KINDS = ('person_crossing', 'vehicle_crossing')
+EVENT_KINDS = ('person_crossing', 'vehicle_crossing', JUNCTION_PASSED)
 MAX_KIND_LABEL = 40
 # The names a kind of road may not take: the page's own roadworks ("works", its taps go to speed_works), a name every
 # object of the page has already ("constructor"), and the fields a guest's copy drops as places
@@ -290,11 +294,11 @@ def block_of(body: dict, span: tuple[int, int]) -> tuple[int, int, int | None, s
     return start, end, kph, note.strip(), base
 
 
-def works_tap(body: dict, span: tuple[int, int]) -> tuple[str, int, int]:
+def works_tap(body: dict, span: tuple[int, int], taps: tuple[str, ...] = WORKS_TAPS) -> tuple[str, int, int]:
     """(tap, at_ns, base_revision) of a request on the roadworks; refused with 400 when it does not fit the drive."""
     tap = body.get('tap')
-    if tap not in WORKS_TAPS:
-        raise SpeedReviewError(400, 'bad_tap', 'tap must be start, end, remove or checked.')
+    if tap not in taps:
+        raise SpeedReviewError(400, 'bad_tap', f'tap must be one of: {", ".join(taps)}.')
     at, base = _integer(body.get('at_ns'), 'at_ns'), _integer(body.get('base_revision'), 'base_revision')
     if not span[0] <= at < span[1]:
         raise SpeedReviewError(400, 'bad_stretch', 'This frame is outside the logs of the drive.')
@@ -467,7 +471,11 @@ class SpeedReviewStore:
     def road_checked(self, route: str) -> dict[str, int]:
         """{kind: up to when a person went through the drive for that kind, from its start}; a kind nobody did is not there."""
         return {row['kind']: row['end_ns'] for row in self._rows('SELECT kind, end_ns FROM speed_road_checked WHERE route = ?',
-                                                                 (route,))}
+                                                                (route,))}
+
+    def dismissed_junctions(self, route: str) -> set[int]:
+        return {row['start_ns'] for row in self._rows(
+            "SELECT start_ns FROM speed_history WHERE route = ? AND action = 'road_passage_dismissed'", (route,))}
 
     def add_road_kind(self, label: str, reviewer: str) -> str:
         """A new kind of road with this label, after the others: returns its kind, a name made of the label."""
@@ -530,7 +538,18 @@ class SpeedReviewStore:
         if exact:
             here = next((row for row in marks if row['start_ns'] == at_ns), None)
         unended = next((row for row in marks if row['end_ns'] is None), None)
-        if tap == 'start':
+        if kind == JUNCTION_PASSED and tap in ('passed', 'dismiss'):
+            if tap == 'dismiss':
+                self._log(connection, route, revision, 'road_passage_dismissed', at_ns, at_ns, item, reviewer)
+                return
+            end = min(at_ns + JUNCTION_MARK_NS, drive_end)
+            if end <= at_ns or any(row['start_ns'] < end and (row['end_ns'] is None or row['end_ns'] > at_ns)
+                                  for row in marks):
+                raise SpeedReviewError(400, bad, 'There is already a junction passage here, or the drive ends here.')
+            connection.execute(f'INSERT INTO {marks_table} ({names}, start_ns, end_ns, reviewer, revision) '
+                               f'VALUES ({holes}, ?, ?, ?, ?)', (*values, at_ns, end, reviewer, revision))
+            self._log(connection, route, revision, 'road_passed', at_ns, end, item, reviewer)
+        elif tap == 'start':
             if unended is not None or here is not None:
                 raise SpeedReviewError(400, bad, f'End the {what} already open first.' if unended is not None
                                        else f'This frame is already inside a {what}.' if kind else
@@ -703,14 +722,7 @@ def road_type_frames(root: Path, route: str, merged: dict | None) -> list[tuple[
     lines = road_types.load_road_types(root, route)
     if not lines or not merged:
         return []
-    decoded = {}
-    for path in (Path(root) / FRAMES_RELATIVE / route).glob('*/frames.jsonl'):
-        for text in path.read_text(encoding='utf-8', errors='replace').splitlines():
-            try:
-                row = json.loads(text)
-                decoded[f"{row['segment_index']}/{row['output_index']}"] = int(row['decoded_frame_index'])
-            except (ValueError, TypeError, KeyError):
-                continue
+    decoded = decoded_frames(root, route, FRAMES_RELATIVE)
     index = drive_logs.frame_index(merged)
     found = []
     for line in lines:
@@ -722,6 +734,53 @@ def road_type_frames(root: Path, route: str, merged: dict | None) -> list[tuple[
             found.append((ns, line))
     found.sort(key=lambda item: item[0])
     return found
+
+
+def decoded_frames(root: Path, route: str, relative: Path) -> dict[str, int]:
+    decoded = {}
+    for path in (Path(root) / relative / route).glob('*/frames.jsonl'):
+        for text in path.read_text(encoding='utf-8', errors='replace').splitlines():
+            try:
+                row = json.loads(text)
+                decoded[f"{row['segment_index']}/{row['output_index']}"] = int(row['decoded_frame_index'])
+            except (ValueError, TypeError, KeyError):
+                continue
+    return decoded
+
+
+def junction_suggestions(store: SpeedReviewStore, route: str, merged: dict | None, span: tuple[int, int],
+                         marks: list[dict]) -> list[dict]:
+    """Prepared map proposals, on the camera clock. A suggestion is never a training answer."""
+    from nnslr_tools.junctions import labelled_junctions
+    from nnslr_tools.road_type_data import FRAMES_RELATIVE
+
+    if not merged:
+        return []
+    try:
+        record = labelled_junctions(store.root, route)
+    except (OSError, ValueError):
+        return []
+    if not record:
+        return []
+    index = drive_logs.frame_index(merged)
+    decoded = decoded_frames(store.root, route, FRAMES_RELATIVE)
+    dismissed = store.dismissed_junctions(route)
+    marked = [mark['start_ns'] for mark in marks if mark['kind'] == JUNCTION_PASSED]
+    found = {}
+    for passage in record['passages']:
+        key = passage.get('passed_key')
+        if not key or passage.get('kind') != 'crossing':
+            continue
+        try:
+            segment, second = map(int, key.split('/'))
+        except (ValueError, AttributeError):
+            continue
+        ns = drive_logs.frame_time(index, segment, decoded.get(key, second * drive_logs.FPS))
+        if ns is not None and span[0] <= ns < span[1] and ns not in dismissed and not any(
+            abs(ns - at) < JUNCTION_MATCH_NS for at in marked
+        ):
+            found[ns] = {'at_ns': ns}
+    return [found[ns] for ns in sorted(found)]
 
 
 def _type_source(line: dict) -> tuple[str, str | None, str | None]:
@@ -785,8 +844,10 @@ def drive_view(store: SpeedReviewStore, drives: DriveReviewStore, route: str) ->
     if span is not None:
         merged = drives.merged(route)
         view.update(speed=speed_curve(merged, span), held=held_spans(merged, span), span_ns=list(span),
-                    total_s=round((span[1] - span[0]) / NS, 1),
-                    road_types=road_type_stretches(road_type_frames(store.root, route, merged), span[1]))
+                     total_s=round((span[1] - span[0]) / NS, 1),
+                     road_types=road_type_stretches(road_type_frames(store.root, route, merged), span[1]))
+        if view['dashcam']:
+            view['junction_suggestions'] = junction_suggestions(store, route, merged, span, view['road'])
     return view
 
 
@@ -868,7 +929,13 @@ def save_road(store: SpeedReviewStore, drives: DriveReviewStore, route: str, bod
     kind = body.get('kind')
     if not isinstance(kind, str):
         raise SpeedReviewError(400, 'bad_kind', 'kind is the name of a kind of road.')
-    tap, at, base = works_tap(body, span)
+    tap, at, base = works_tap(body, span, JUNCTION_TAPS if kind == JUNCTION_PASSED else WORKS_TAPS)
+    if kind == JUNCTION_PASSED and tap in ('dismiss', 'checked'):
+        pending = junction_suggestions(store, route, drives.merged(route), span, store.road(route))
+        if tap == 'dismiss' and not any(item['at_ns'] == at for item in pending):
+            raise SpeedReviewError(400, 'bad_road', 'There is no junction suggestion on this frame.')
+        if tap == 'checked' and any(item['at_ns'] < at for item in pending):
+            raise SpeedReviewError(400, 'bad_road', 'Confirm or dismiss the junction suggestions before this frame first.')
     store.tap_road(route, kind, tap, at, span[1], base, reviewer)
     return drive_view(store, drives, route)
 

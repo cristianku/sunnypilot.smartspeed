@@ -136,9 +136,11 @@ def test_cli_junctions_all(tmp_path, capsys):
     gps.write_text(''.join(json.dumps(line) + '\n' for line in _positions()))
     assert main(['junctions', '--all', '--data-root', str(tmp_path)]) == 0
     assert json.loads(capsys.readouterr().out)['junctions'] == 1
+    assert main(['junctions', '--all', '--missing', '--data-root', str(tmp_path)]) == 0
+    assert 'up to date' in capsys.readouterr().out
     # A map read before the junction tags were kept: read it again.
     _write_map(tmp_path, [{key: value for key, value in way.items() if key != 'junction'} for way in STREET])
-    assert main(['junctions', '--all', '--data-root', str(tmp_path)]) == 2
+    assert main(['junctions', '--all', '--missing', '--data-root', str(tmp_path)]) == 2
     assert 'again' in capsys.readouterr().err
 
 

@@ -43,6 +43,7 @@ export interface RoadMark extends Works {
 
 /** What the marks on the page are of: the roadworks, or a kind of road by its kind. */
 export const ROADWORKS = 'works';
+export const JUNCTION_PASSED = 'junction_passed';
 
 /** Whose a stretch of road type is: the map's, the road labeler's (its layer over the map, Prepare Speed review), or a
  * person's correction over both. */
@@ -92,6 +93,8 @@ export interface SpeedDrive {
   road_kinds: RoadKind[];
   road: RoadMark[];
   road_checked_ns: Record<string, number>;
+  /** Suggested camera times from the map. Not Brain labels until confirmed. */
+  junction_suggestions?: {at_ns: number}[];
   /** The road types along the drive, the map's and a person's corrections, and the types there are; missing from a
    * server older than them. */
   road_types?: RoadTypeStretch[];

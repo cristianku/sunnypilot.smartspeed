@@ -170,6 +170,20 @@ def test_a_crossing_is_out_of_the_loss_only_half_a_second_around_its_taps_the_ot
     assert targets.edge_seconds(None) == targets.edge_seconds('narrow') == targets.EDGE_SECONDS == 2
 
 
+def test_marked_junction_is_a_one_second_pulse_at_brain_rate():
+    import numpy as np
+
+    targets = _targets()
+    kind = targets.JUNCTION_PASSED
+    ns = np.array([int(t * NS) for t in np.arange(8, 13.01, 0.25)])
+    marks = [kind_mark(kind, 10.07, 11.07)]
+    y, w = targets.road_answers(ns, marks, {}, (kind,))
+    assert ns[(y * w)[:, 0] > 0].tolist() == [int(t * NS) for t in (10.25, 10.5, 10.75, 11)]
+    assert int(w.sum()) == 4  # Unreviewed moments do not become negative examples.
+    _, w_checked = targets.road_answers(ns, marks, {kind: 12 * NS}, (kind,))
+    assert w_checked[0, 0] == 1 and w_checked[-1, 0] == 0
+
+
 def test_the_kinds_of_road_are_read_in_their_order_and_a_file_without_them_has_the_first_ones(tmp_path):
     import sqlite3 as sql
     from nnslr_tools.speed_review import FIRST_ROAD_KINDS, SpeedReviewStore, db_path
@@ -675,7 +689,8 @@ def test_a_crossing_is_a_kind_of_road_and_a_drive_has_no_road_users_answers_any_
     write_drive(tmp_path, ROUTE, [(0, i) for i in range(40)])
     label_db(tmp_path, road=[(ROUTE, 'person_crossing', 10 * NS, 20 * NS)], road_checked=[(ROUTE, 'person_crossing', 30 * NS)])
     kinds = targets.road_kinds(tmp_path)
-    assert kinds[-2:] == EVENT_KINDS == ('person_crossing', 'vehicle_crossing') and kinds[:2] == ('narrow', 'country')
+    assert kinds[-len(EVENT_KINDS):] == EVENT_KINDS
+    assert kinds[:2] == ('narrow', 'country') and EVENT_KINDS[:2] == ('person_crossing', 'vehicle_crossing')
     merged = {'frames': encoded(40), 'series': {'v_ego': [[3 * NS, 77.0]]}, 'meta': {}, 'span': [0, 40 * NS]}
     split = {'cells': {}, 'partitions': {}, 'frame_keys': {}}
     drive = targets.drive_targets(tmp_path, ROUTE, targets.read_labels(tmp_path)[ROUTE], merged, split, inputs=False,

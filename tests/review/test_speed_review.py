@@ -492,12 +492,46 @@ def test_the_crossings_reach_a_store_made_before_them_after_the_kinds_it_has(tmp
     assert [row['kind'] for row in before.road_kinds()] == ['narrow', 'country', 'gravel', 'potholes', 'speed_bump', 'tunnel']
     again = SpeedReviewStore(tmp_path)
     kinds = [row['kind'] for row in again.road_kinds()]
-    assert kinds == ['narrow', 'country', 'gravel', 'potholes', 'speed_bump', 'tunnel', 'person_crossing', 'vehicle_crossing']
+    assert kinds == ['narrow', 'country', 'gravel', 'potholes', 'speed_bump', 'tunnel', *speed_review.EVENT_KINDS]
     assert {row['kind']: row['label'] for row in again.road_kinds()}['person_crossing'] == first['person_crossing']
     # A kind a person adds after goes after them, and the marks of a kind stay its own.
     assert again.add_road_kind('Cobbles', 'cristianku') == 'cobbles'
-    assert [row['kind'] for row in again.road_kinds()][-3:] == ['person_crossing', 'vehicle_crossing', 'cobbles']
+    assert [row['kind'] for row in again.road_kinds()][-4:] == [*speed_review.EVENT_KINDS, 'cobbles']
     assert set(speed_review.EVENT_KINDS) <= {kind for kind, _label in speed_review.FIRST_ROAD_KINDS}
+
+
+def test_junction_suggestions_are_read_only_and_the_passage_is_one_mark(store, monkeypatch):
+    from nnslr_tools import junctions
+
+    records = {'passages': [{'kind': 'crossing', 'passed_key': '0/10'}, {'kind': 'crossing', 'passed_key': '0/20'},
+                            {'kind': 'roundabout', 'passed_key': '0/30'}, {'kind': 'crossing', 'passed_key': None}]}
+    monkeypatch.setattr(junctions, 'labelled_junctions', lambda *_: records)
+    drives = FakeDrives([(at(0), 70.0), (at(15), 100.0)])
+    raw = drives.merged(ROUTE)
+    raw['frames'] = {0: {'sof': [at(10), at(20), at(30)], 'ids': [200, 400, 600]}}
+    monkeypatch.setattr(drives, 'merged', lambda _: raw)
+    view = speed_review.drive_view(store, drives, ROUTE)
+    assert view['junction_suggestions'] == [{'at_ns': at(10)}, {'at_ns': at(20)}]
+    assert view['road'] == []
+
+    def save(tap, second, revision):
+        return speed_review.save_road(store, drives, ROUTE, {'kind': speed_review.JUNCTION_PASSED, 'tap': tap,
+                                                             'at_ns': at(second), 'base_revision': revision}, 'human')
+
+    with pytest.raises(SpeedReviewError, match='Confirm or dismiss'):
+        save('checked', 15, 0)
+    with pytest.raises(SpeedReviewError, match='no junction suggestion'):
+        save('dismiss', 11, 0)
+    confirmed = save('passed', 10.25, 0)
+    assert confirmed['revision'] == 1 and confirmed['junction_suggestions'] == [{'at_ns': at(20)}]
+    assert road_marks(store) == [(speed_review.JUNCTION_PASSED, 10.25, 11.25)]
+    assert confirmed['speed'] == view['speed'] and confirmed['blocks'] == []
+    dismissed = save('dismiss', 20, 1)
+    assert dismissed['road'] == confirmed['road'] and dismissed['junction_suggestions'] == []
+    checked = save('checked', 25, 2)
+    assert checked['road_checked_ns'][speed_review.JUNCTION_PASSED] == at(25)
+    removed = save('remove', 10.5, 3)
+    assert removed['road'] == [] and removed['junction_suggestions'] == [{'at_ns': at(10)}]
 
 
 def test_marks_of_two_kinds_may_overlap_and_those_of_one_kind_may_not(store):

@@ -14,7 +14,7 @@ const props = defineProps<{choices: BrainChoice; id: string; runs?: readonly Bra
 type Switch = 'works' | 'road' | 'types' | 'applicability' | 'map';
 const SWITCHES: {key: Switch; label: string; title: string}[] = [
   {key: 'works', label: 'Roadworks', title: 'The brain also learns the roadworks on the road, a head only the training has'},
-  {key: 'road', label: 'Road conditions', title: 'The brain also learns the kinds of road you mark in Speed review: narrow, country, gravel, potholes, speed bumps…, and a person or a vehicle crossing our path. Off: none of them, the crossings included'},
+  {key: 'road', label: 'Road conditions', title: 'The brain also learns the events and kinds of road you mark in Speed Review, including junction passages and people or vehicles crossing our path. Off: none of these marks are used.'},
   {key: 'types', label: 'Road type (map)', title: 'The brain also learns the road type of the map (motorway, rural, town…), corrected in Speed review; only the seconds that have one count'},
   {key: 'applicability', label: 'Applicability', title: 'The brain also learns whose road a speed sign is of, ours or another, from the boxes you reviewed in Sign review: a head only the training has for now, measured only against your reviews. Off: no such head'},
   // An input, not a head: off unless turned on (#85). The one brain that reads the map.

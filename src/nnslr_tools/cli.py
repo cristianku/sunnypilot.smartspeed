@@ -1888,6 +1888,7 @@ def build_parser() -> argparse.ArgumentParser:
                                                    "them today")
     p_junctions.add_argument("--route", action="append", help="route id; repeat for more")
     p_junctions.add_argument("--all", action="store_true", help="every route with GPS positions (nnslr gps)")
+    p_junctions.add_argument("--missing", action="store_true", help="skip current proposals for unchanged GPS and map files")
     p_junctions.add_argument("--data-root", help="default: NNSLR_DATA_ROOT or <repo>/data")
     p_junctions.set_defaults(func=_cmd_junctions)
     from nnslr_tools import signnet as signnet_settings
@@ -3110,7 +3111,7 @@ def _cmd_road_types(args: argparse.Namespace) -> int:
 
 def _cmd_junctions(args: argparse.Namespace) -> int:
     from nnslr_tools.gps import GPS_RELATIVE_DIR, positions_path
-    from nnslr_tools.junctions import build_junctions, load_map
+    from nnslr_tools.junctions import build_junctions, junctions_path, load_junctions, load_map
     from nnslr_tools.preannotate import resolve_data_root
     root = resolve_data_root(Path(args.data_root) if args.data_root else None)
     routes = list(args.route or [])
@@ -3119,6 +3120,22 @@ def _cmd_junctions(args: argparse.Namespace) -> int:
     if not routes:
         print("nnslr junctions: name a --route or use --all (routes with GPS positions: nnslr gps)", file=sys.stderr)
         return 2
+    if args.missing:
+        roads = root / 'derived' / 'osm' / 'roads.jsonl'
+        map_time = roads.stat().st_mtime_ns if roads.is_file() else 0
+
+        def current(route):
+            try:
+                output = junctions_path(root, route)
+                return output.stat().st_mtime_ns >= max(map_time, positions_path(root, route).stat().st_mtime_ns) \
+                    and load_junctions(root, route) is not None
+            except (OSError, ValueError):
+                return False
+
+        routes = [route for route in routes if not current(route)]
+        if not routes:
+            print("Junction suggestions are up to date.")
+            return 0
     try:
         junctions = load_map(root)
     except ValueError as exc:

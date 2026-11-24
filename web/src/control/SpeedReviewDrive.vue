@@ -63,7 +63,7 @@ import Segmented from './Segmented.vue';
 import {aiRuns, isAiFrame, isOtherRoad, isSpeedSign, lastRead, lightOf, type MarkRun, markRuns, nearestFrame, type OffRead, offReads, placeFrames, type SignFrames, signReads, signRuns,
   stepFrame} from './sign-frames';
 import {boxesAt, type Drawn, exactFrames, type VideoFrame, type VideoIndex} from './frame-boxes';
-import {type Block, blockAt, canEndWorks, clampKph, draggedEdge, heldAt, MIN_BLOCK_NS, ROAD_TYPE_LABELS, ROADWORKS, type RoadKind,
+import {type Block, blockAt, canEndWorks, clampKph, draggedEdge, heldAt, JUNCTION_PASSED, MIN_BLOCK_NS, ROAD_TYPE_LABELS, ROADWORKS, type RoadKind,
   roadTypeAt, roadTypeLabel, type RoadTypeSource, type RoadTypeStretch, type SpeedDrive, speedAt, speedIndex, typeSource, type Works, worksAt, type WorksTap} from './speed-review';
 
 /** kinds: a guest's work on the drive ('speed', 'signs'), which says the sides it has; the administrator has both. */
@@ -313,6 +313,14 @@ watch(picked, (kind) => {
 /** What is picked; a kind this drive's server does not have (an old choice) is the roadworks. */
 const pickedKind = computed(() => kinds.value.find((item) => item.kind === picked.value) ?? kinds.value[0]!);
 const isWorks = computed(() => pickedKind.value.kind === ROADWORKS);
+const isJunction = computed(() => pickedKind.value.kind === JUNCTION_PASSED);
+const junctionSuggestions = computed(() => drive.value?.junction_suggestions ?? []);
+const junctionHere = computed(() => junctionSuggestions.value.reduce<number | null>((nearest, {at_ns: at}) =>
+  Math.abs(at - now.value) <= 5e8 && (nearest === null || Math.abs(at - now.value) < Math.abs(nearest - now.value)) ? at : nearest, null));
+const junctionBefore = computed(() => junctionSuggestions.value.reduce<number | null>(
+  (last, {at_ns}) => at_ns < now.value - 5e8 ? at_ns : last, null));
+const junctionAfter = computed(() => junctionSuggestions.value.find(({at_ns}) => at_ns > now.value + 5e8)?.at_ns ?? null);
+const seekJunction = (at: number | null): void => { if (at !== null) player.value?.seek(secondOf(at)); };
 const marksOf = (kind: string): Works[] => kind === ROADWORKS ? drive.value?.works ?? []
   : (drive.value?.road ?? []).filter((item) => item.kind === kind);
 /** Its own key only: a kind is never read off what every object has. */
@@ -326,7 +334,8 @@ const markOpen = computed(() => marks.value.find((item) => item.end_ns === null)
 const markHere = computed(() => worksAt(marks.value, now.value));
 const canMark = computed(() => markOpen.value ? canEndWorks(marks.value, markOpen.value, now.value) : markHere.value === null);
 const checked = computed(() => checkedOf(pickedKind.value.kind));
-const canCheck = computed(() => !markOpen.value || now.value < markOpen.value.start_ns);
+const canCheck = computed(() => (!markOpen.value || now.value < markOpen.value.start_ns)
+  && (!isJunction.value || !junctionSuggestions.value.some(({at_ns}) => at_ns < now.value)));
 /** The kinds whose marks the frame shown is inside: a dot on their chips. */
 const inside = computed(() => new Set(kinds.value.filter((item) => worksAt(marksOf(item.kind), now.value)).map((item) => item.kind)));
 const tapMark = (tap: WorksTap): void => {
@@ -334,7 +343,13 @@ const tapMark = (tap: WorksTap): void => {
     : send('/road', {kind: pickedKind.value.kind, tap, at_ns: now.value}));
 };
 function mark(): void {
-  if (!locked.value && canMark.value) tapMark(markOpen.value ? 'end' : 'start');
+  if (locked.value || !canMark.value) return;
+  if (isJunction.value) {
+    void send('/road', {kind: JUNCTION_PASSED, tap: 'passed', at_ns: within(now.value)});
+  } else tapMark(markOpen.value ? 'end' : 'start');
+}
+function dismissJunction(): void {
+  if (junctionHere.value !== null) void send('/road', {kind: JUNCTION_PASSED, tap: 'dismiss', at_ns: junctionHere.value});
 }
 /** Key k: the next kind. */
 function nextKind(): void {
@@ -1093,6 +1108,13 @@ function worksIn(from: number, to: number) {
           </template>
           <rect v-for="mark in worksIn(from, to)" :key="mark.key" :x="x(mark.from)" :y="PLOT + 2" :width="w(mark.from, mark.to)" height="4"
                 :class="['sr-works', {'sr-works-open': mark.open, 'sr-road': !isWorks}]"/>
+          <template v-if="isJunction">
+            <rect v-for="{at_ns: at} in junctionSuggestions.filter(({at_ns}) => from <= secondOf(at_ns) && secondOf(at_ns) <= to)"
+                  :key="'junction' + at" :x="x(secondOf(at)) - 3" :y="PLOT" width="6" height="6" rx="2"
+                  class="sr-works sr-road" style="opacity:.5;cursor:pointer" @pointerdown.stop="seekJunction(at)">
+              <title>Junction passed · suggestion</title>
+            </rect>
+          </template>
           <rect v-for="part in checkedIn(from, to)" :key="part.from" :x="x(part.from)" :y="HEIGHT - 2" :width="w(part.from, part.to)" height="2"
                 class="sr-works-checked"/>
         </svg>
@@ -1324,7 +1346,9 @@ function worksIn(from: number, to: number) {
               <button type="button" class="btn small" @click="adding = false; newLabel = ''">Cancel</button>
             </form>
              <p class="dr-hint" id="sr-condition-status" aria-live="polite">
-               <strong>{{ pickedKind.label }}</strong> · <template v-if="markOpen">
+                <strong>{{ pickedKind.label }}</strong> · <template v-if="isJunction">
+                  {{ markHere ? 'Marked here' : junctionHere !== null ? 'Suggested here' : 'Mark just after the junction' }}
+                </template><template v-else-if="markOpen">
                  Started at {{ clockOf(secondOf(markOpen.start_ns)) }}. Go to the end.
                </template><template v-else-if="markHere">
                  Marked {{ clockOf(secondOf(markHere.start_ns)) }}–{{ clockOf(secondOf(markHere.end_ns ?? now)) }}
@@ -1333,14 +1357,23 @@ function worksIn(from: number, to: number) {
              <div class="sr-tools">
                <button v-if="markOpen || !markHere" type="button" class="btn small primary" id="sr-works-mark"
                        :disabled="locked || !canMark" aria-describedby="sr-condition-status"
-                       :title="(markOpen ? 'Mark the end of ' : 'Mark the start of ') + pickedKind.label + ' at this frame (W)'"
-                       @click="mark">{{ markOpen ? 'End here' : 'Start here' }}</button>
+                        :title="isJunction ? 'Mark the passage at this frame (W). This does not end a speed limit.' :
+                           (markOpen ? 'Mark the end of ' : 'Mark the start of ') + pickedKind.label + ' at this frame (W)'"
+                        @click="mark">{{ isJunction ? (junctionHere !== null ? 'Confirm here' : 'Mark here') : markOpen ? 'End here' : 'Start here' }}</button>
+                <button v-if="isJunction && junctionHere !== null" type="button" class="btn small" id="sr-junction-dismiss"
+                        :disabled="locked" @click="dismissJunction">Dismiss</button>
                <button v-if="markHere" type="button" class="btn small" id="sr-works-remove" :disabled="locked"
                        :title="'Remove this ' + pickedKind.label + ' stretch'" @click="tapMark('remove')">Remove</button>
               <button type="button" class="btn small" id="sr-works-checked" :disabled="locked || !canCheck"
                       :title="'From the start of the drive to this frame every ' + pickedKind.label.toLowerCase() + ' is marked: no mark there means none (key c)'"
                       @click="tapMark('checked')">Checked to here</button>
-            </div>
+             </div>
+             <div v-if="isJunction && junctionSuggestions.length" class="sr-tools">
+               <button type="button" class="btn small" id="sr-junction-before" :disabled="junctionBefore === null"
+                       @click="seekJunction(junctionBefore)">‹ Suggestion</button>
+               <button type="button" class="btn small" id="sr-junction-after" :disabled="junctionAfter === null"
+                       @click="seekJunction(junctionAfter)">Suggestion ›</button>
+             </div>
              <p v-if="checked !== null" class="dr-hint">Checked up to {{ clockOf(secondOf(checked)) }}</p>
           </div>
           <details v-if="!readOnly" class="dr-more sr-keys"><summary>Keys</summary>

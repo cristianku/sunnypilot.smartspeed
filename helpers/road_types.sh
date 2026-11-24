@@ -19,6 +19,7 @@
 #   e. the map road of every frame, its limit and its type                         (nnslr road-types --all)
 #   f. the tunnels of the scanned drives, where the map and the lost GPS agree, written as marks of the kind tunnel in
 #      Speed review (reviewer osm; never over a person's mark, removal or check)      (nnslr tunnels --all)
+#   g. junction passage suggestions for Speed Review, never confirmed by the map  (nnslr junctions --all --missing)
 #
 # usage: helpers/road_types.sh [--again]   (--again: the map roads read again even when nothing is newer)
 # Network: Geofabrik's index once a month and the extracts the drives miss (download.geofabrik.de), plus uv's first
@@ -125,4 +126,7 @@ echo "== e. Road type of every frame"
 "$NN" road-types --all --data-root "$DATA" < /dev/null
 echo "== f. Tunnels"
 "$NN" tunnels --all --data-root "$DATA" < /dev/null || echo "The tunnels not written: Speed review keeps the marks it has"
+echo "== g. Junction suggestions"
+"$NN" junctions --all --missing --data-root "$DATA" < /dev/null \
+    || echo "Some junction suggestions could not be prepared; manual junction marks are still available"
 echo "Done: the map's limits are in $DATA/derived/road_types/."

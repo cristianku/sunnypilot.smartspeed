@@ -233,7 +233,7 @@ from nnslr_tools.road_type_data import FRAMES_RELATIVE, frame_cells, frame_path
 from nnslr_tools.road_types import ROAD_TYPES, load_road_types
 from nnslr_tools.road_type_signs import (SEGMENT_SECONDS, STEPS_PER_SECOND, VIDEO_FPS, VIDEO_STEP, fingerprint, load_signs,
                                          load_vision, package_path, picture_path, pictures_ready)
-from nnslr_tools.speed_review import (EVENT_KINDS, FIRST_ROAD_KINDS, NS, dashcam_drive, db_path, driver_speed, engaged_series,
+from nnslr_tools.speed_review import (EVENT_KINDS, FIRST_ROAD_KINDS, JUNCTION_PASSED, NS, dashcam_drive, db_path, driver_speed, engaged_series,
                                       machine_held)
 
 # The brain's own table, never taken from Speed review: a class a km/h since 8 Nov 2026 (5 km/h before).
@@ -510,6 +510,8 @@ def speed_answers(ns: np.ndarray, driver_kph: list, blocks: list[dict],
 
 def edge_seconds(kind: str | None) -> float:
     """The seconds around a tap of a mark of that kind (None: the roadworks) left out of the loss."""
+    if kind == JUNCTION_PASSED:
+        return 0.0  # One tap defines the start of a one-second pulse; no separate end tap to blur.
     return EVENT_EDGE_SECONDS if kind in EVENT_KINDS else EDGE_SECONDS
 
 
