@@ -46,13 +46,14 @@ import {aiLive} from '../composables/ai-live';
 import {askConfirm} from '../composables/confirm';
 import {toast} from '../composables/toast';
 import {boxColor, describe, plateTag, shortName} from '../review/catalog';
-import {row as editRow} from '../review/current';
+import {row as editRow, selectedBox} from '../review/current';
 import {frameKeyAt, loadSignEditor, pictureBaseOf, stopSignEditor, videoFrameOf} from '../review/embed';
 import {frameStatus} from '../review/frames';
 import {linkedFrame, openFrame} from '../review/navigation';
 import LightChips from '../review/LightChips.vue';
 import SignEditorPanel from '../review/SignEditorPanel.vue';
 import SignEditorStage from '../review/SignEditorStage.vue';
+import SpeedValueChips from '../review/SpeedValueChips.vue';
 import {report as editReport, rowOf, state as editState} from '../review/store';
 import {clockOf, type ScanState, secondOf as frameSecondOf, type SyncSegment} from './drive-review';
 import DriveReviewDrive from './DriveReviewDrive.vue';
@@ -1040,6 +1041,11 @@ function worksIn(from: number, to: number) {
         class="sr-ai-square" aria-hidden="true"></i>AI REVIEW · {{ thousands(aiSaved) }}</b></template>
     <!-- The traffic light of the selected box, on the title row while a frame's signs are edited. -->
     <template #title-side><div v-if="editing && (onFrame || alone)" class="sign-editor sr-title-lights"><LightChips/></div></template>
+    <template #title-below>
+      <div v-if="editing && editRow && (onFrame || alone)" class="sign-editor sr-title-speeds">
+        <SpeedValueChips :row="editRow" :detection="selectedBox"/>
+      </div>
+    </template>
     <template #hud>
       <span v-if="!speedOff" class="dr-box sr-box-label" :class="{empty: label === null}" title="ANSWER: your dashboard speed, or your block where there is one; a dash where openpilot or the cruise held the speed"><small>ANSWER</small>
         <b>{{ label ?? '–' }}</b></span>

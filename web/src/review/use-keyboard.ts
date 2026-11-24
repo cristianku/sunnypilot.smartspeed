@@ -7,7 +7,8 @@
 // frame after, saved going back), I ask the AI, T the car's
 // networks on the frame (car.ts), H second reading, D removes every
 // box of the frame, Del removes a box the reviewer selected (on the one the page opened on it says to click it
-// first), Esc cancel, ? shows or hides the list of the keys. While a menu or panel of the site's top bar is open, the keys are its own.
+// first), Esc cancel, ? marks the selected box's number unreadable. While a menu or panel of the site's top bar is open,
+// the keys are its own.
 import {onBeforeUnmount, onMounted} from 'vue';
 import {isGuest} from '../common/guest';
 import {askAi, fitBox, fitLocal} from './ai';
@@ -20,7 +21,7 @@ import {signStyleOf} from './catalog';
 import {countryOf, currentRow, workOf} from './frames';
 import {stepSecond} from './navigation';
 import {stepFrame} from './video';
-import {report, state, toggleKeys} from './store';
+import {report, state} from './store';
 
 // A speed is one key (2 = 20 … 9 = 90); after a 1 the page waits this long for a second digit ("1 2" = 120, 1 alone
 // = 100), and a 0 that comes this soon after a speed set at once only ends it typed whole ("5 0", "1 2 0").
@@ -163,11 +164,23 @@ export function useKeyboard(stepVideo: (direction: number) => void = stepFrame):
     // Never a frame step, a value or a confirmation from a key meant for an open menu or panel.
     if (popoverHasKeys(event.target instanceof Element ? event.target : null)) return;
     const tag = target ? target.tagName.toLowerCase() : '';
-    if (tag === 'input' || tag === 'select' || tag === 'textarea') {
+    if (tag === 'input' || tag === 'select' || tag === 'textarea' || target?.isContentEditable) {
       if (event.key === 'Escape') target?.blur();
       return;
     }
     if (event.metaKey || event.ctrlKey || event.altKey) return;
+    // '?' is usually typed with Shift. Cancel a waiting digit instead of applying it before the unreadable label.
+    if (event.key === '?') {
+      if (state.selected >= 0 && !report.readOnly) {
+        event.preventDefault();
+        window.clearTimeout(typingTimer);
+        window.clearTimeout(justSetTimer);
+        state.typing = '';
+        justSet = false;
+        setValue(null);
+      }
+      return;
+    }
     // Any key but a digit ends the number being typed first: Enter then confirms the value just typed.
     if (!/^[0-9]$/.test(event.key)) {
       justSet = false;
@@ -312,10 +325,6 @@ export function useKeyboard(stepVideo: (direction: number) => void = stepFrame):
         break;
       case 'Escape':
         cancelAll();
-        break;
-      case '?':
-        event.preventDefault();
-        toggleKeys();
         break;
     }
   };

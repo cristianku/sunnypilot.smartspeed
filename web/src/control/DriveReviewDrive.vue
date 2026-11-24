@@ -852,6 +852,7 @@ watch(() => props.route, () => {
         <div class="rt-view-name">
           <div class="dr-title-row"><h2 id="dr-view-title">{{ view?.title ?? (guest ? 'Drive' : 'Places unknown') }} <slot name="badge"></slot></h2>
             <slot name="title-side"></slot></div>
+          <slot name="title-below"></slot>
           <span>{{ facts }}</span>
           <span v-if="whenNote" class="dr-uncertain">{{ whenNote }}</span>
         </div>

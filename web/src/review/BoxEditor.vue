@@ -2,16 +2,17 @@
 // The editor of the selected box: where it comes from and Fit box (its zoom is inside the photo, ZoomInset.vue), the
 // labels used last, road, speed signs, other value, type and kinds of other signs, details.
 import {computed, ref, watch} from 'vue';
-import {BOOLEAN_FIELDS, FAMILIES, PANELS, PLATE_DISTANCE_MAX_M, PLATE_HOURS, QUICK_VALUES, ROADS, SELECT_FIELDS,
-  SIGN_KIND_GROUPS, US_VALUES, familyHasValue, holdsPlate, signStyleOf, takesDistance, type BooleanField,
+import {BOOLEAN_FIELDS, FAMILIES, PANELS, PLATE_DISTANCE_MAX_M, PLATE_HOURS, ROADS, SELECT_FIELDS,
+  SIGN_KIND_GROUPS, familyHasValue, holdsPlate, takesDistance, type BooleanField,
   type SelectField} from './catalog';
 import {aiBlocker, canFitLocally, fitBox, fitLocal, fitting, localFitting} from './ai';
 import {addedBy, originalOf} from './boxes';
 import {releaseFocus} from './dom';
 import {setFamily, setField, setKind, setOnVehicle, setOtherOurs, setValue, squareSelected, togglePainted, toggleVariable} from './edits';
-import {countryOf, workOf} from './frames';
+import {workOf} from './frames';
 import {vFill} from './fill';
 import LightChips from './LightChips.vue';
+import SpeedValueChips from './SpeedValueChips.vue';
 import {report, state} from './store';
 import type {Detection, FrameRow} from './types';
 
@@ -21,14 +22,9 @@ const props = defineProps<{row: FrameRow; detection: Detection | null}>();
 const usual = FAMILIES.filter((family) => !family.minor);
 const minor = FAMILIES.filter((family) => family.minor);
 const hasValueField = computed(() => props.detection !== null && familyHasValue(props.detection.family));
-const noValue = computed(() => hasValueField.value
-  && (props.detection?.value_kph === null || props.detection?.value_kph === undefined));
 const road = computed(() => props.detection?.applicability || 'unresolved');
 const panel = computed(() => props.detection?.supplementary_panel ?? 'unknown');
 const variable = computed(() => props.detection?.family === 'variable_display');
-// In the US the signs are the white SPEED LIMIT rectangles, in mph and every 5; elsewhere the red discs of km/h.
-const usSigns = computed(() => signStyleOf(countryOf(props.row, workOf(props.row))) === 'us');
-const quickValues = computed(() => usSigns.value ? US_VALUES : QUICK_VALUES);
 // From and to of a plate of hours. The box takes them when both are chosen: until then they wait here.
 const asksHours = computed(() => panel.value === 'time' && props.detection?.family === 'maximum_speed');
 const halfHours = ref<[string, string]>(['', '']);
@@ -165,24 +161,9 @@ function booleanChanged(key: BooleanField, event: Event): void {
       <button type="button" class="chip quick" id="onVehicle" title="A sign-like disc or panel on a vehicle, such as a truck's top-speed sticker: not a sign"
               @click="setOnVehicle(); releaseFocus($event)">On a vehicle<kbd>V</kbd></button>
     </div>
-    <!-- The signs are always there: a number makes the box a speed limit, "?" means the number cannot be read. -->
-    <div :class="['signs', {led: variable, us: usSigns}]" id="quickValues" role="group" :aria-label="usSigns ? 'Speed in mph' : 'Speed'">
-      <template v-if="usSigns">
-        <button v-for="value in quickValues" :key="value" type="button" class="sign us"
-                :aria-pressed="detection?.value_kph === value" :data-value="value" :aria-label="value + ' mph written on sign'"
-                @click="setValue(value); releaseFocus($event)"><span class="us-top" aria-hidden="true">SPEED<br>LIMIT</span><span class="us-num">{{ value }}</span></button>
-      </template>
-      <template v-else>
-        <button v-for="value in quickValues" :key="value" type="button" :class="value >= 100 ? 'sign wide' : 'sign'"
-                :aria-pressed="detection?.value_kph === value" :data-value="value" :aria-label="value + ' written on sign'"
-                @click="setValue(value); releaseFocus($event)">{{ value }}</button>
-      </template>
-      <button type="button" :class="usSigns ? 'sign us unknown' : 'sign unknown'" :aria-pressed="noValue" data-value="unknown"
-              title="Number not readable" aria-label="Number not readable" @click="setValue(null); releaseFocus($event)"><template
-              v-if="usSigns"><span class="us-top" aria-hidden="true">SPEED<br>LIMIT</span><span class="us-num">?</span></template><template
-              v-else>?</template></button>
-    </div>
-    <!-- The lit display over the road (L): lit, the numbers above look like it; the number stays either way. -->
+    <!-- In Speed and sign review the same picker is below the drive name. -->
+    <SpeedValueChips v-if="!report.embedded" :row="row" :detection="detection"/>
+    <!-- The lit display over the road (L): the number stays either way. -->
     <div class="quick-row">
       <button type="button" class="chip quick variable" id="variable" :aria-pressed="variable"
               @click="toggleVariable(); releaseFocus($event)">Variable speed limit<kbd>L</kbd></button>

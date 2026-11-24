@@ -5,15 +5,19 @@ Every drive and label here is SYNTHETIC: made up by these tests. Nothing here is
 """
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from nnslr_tools import pages  # noqa: E402
 from nnslr_tools.review_access import guest_rule  # noqa: E402
-from review_helpers import OTHER_ROUTE, ROUTE, RUN_ID, RunningServer, json_of, make_report, page_body  # noqa: E402
+from review_helpers import OTHER_ROUTE, ROUTE, RUN_ID, RunningServer, json_of, make_report, page_body, real_previews  # noqa: E402
 
 
 def test_the_editor_gets_the_data_of_the_review_page_without_the_menu_of_the_drives(tmp_path):
@@ -109,3 +113,63 @@ def test_the_pages_with_speed_review_carry_the_style_of_the_editor(tmp_path):
     # Before a server that knows the mark replaces it, it is a comment: the page's style stays valid.
     assert pages.SIGN_EDITOR_MARK in pages.asset('control.html')
     assert pages.SIGN_EDITOR_MARK.startswith('/*') and pages.SIGN_EDITOR_MARK.endswith('*/')
+
+
+def test_speed_picker_under_the_drive_title_and_unreadable_key(tmp_path):
+    python = os.environ.get('NNSLR_TEST_BROWSER_PYTHON', sys.executable)
+    chromium = os.environ.get('NNSLR_TEST_CHROMIUM')
+    if not chromium or subprocess.run([python, '-c', 'import playwright.sync_api'], capture_output=True).returncode:
+        pytest.skip('optional Playwright environment not configured')
+    make_report(tmp_path)
+    real_previews(tmp_path)
+    server = RunningServer(tmp_path)
+    try:
+        result = subprocess.run([python, '-c', PICKER_BROWSER, f'http://127.0.0.1:{server.port}', chromium, ROUTE],
+                                capture_output=True, text=True, timeout=60)
+    finally:
+        server.close()
+    assert result.returncode == 0, result.stdout + '\n' + result.stderr
+
+
+PICKER_BROWSER = r'''
+import sys
+from playwright.sync_api import expect, sync_playwright
+
+base, chromium, route = sys.argv[1:]
+with sync_playwright() as p:
+    browser = p.chromium.launch(executable_path=chromium, headless=True)
+    for width in (820, 1180):
+        page = browser.new_page(viewport={'width': width, 'height': 900})
+        writes = []
+
+        def allow_reads(request):
+            if request.request.method == 'GET':
+                request.continue_()
+            else:
+                writes.append(request.request.url)
+                request.abort()
+
+        page.route('**/*', allow_reads)
+        page.goto(base + '/speed-review?drive=' + route + '&side=signs&frame=0/0')
+        title = page.locator('#dr-view-title')
+        picker = page.locator('#quickValues')
+        expect(picker).to_be_visible()
+        expect(page.locator('.rt-view-name > .sr-title-speeds > #quickValues')).to_have_count(1)
+        expect(page.locator('#editor #quickValues')).to_have_count(0)
+        assert title.bounding_box()['y'] < picker.bounding_box()['y'] < page.locator('#scene').bounding_box()['y']
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        # A pending 1 must not reset a later unreadable mark to 100.
+        pick = lambda value: picker.locator(f'[data-value="{value}"]')
+        pick(50).click()
+        expect(pick(50)).to_have_attribute('aria-pressed', 'true')
+        page.keyboard.press('1')
+        page.keyboard.press('?')
+        expect(pick('unknown')).to_have_attribute('aria-pressed', 'true')
+        page.keyboard.press('o')
+        expect(page.locator('#roads [data-applicability="own_road"]')).to_have_attribute('aria-pressed', 'true')
+        expect(pick('unknown')).to_have_attribute('aria-pressed', 'true')
+        page.locator('#keysToggle').click()
+        expect(page.locator('#keys')).to_contain_text('number not readable')
+        assert writes == [], writes
+        page.close()
+'''
