@@ -446,6 +446,8 @@ def evaluate_reader(
     batch_size: int = 64,
     num_workers: int = DEFAULT_WORKERS,
 ) -> dict[str, Any]:
+    from nnslr_tools import reader_country
+
     torch, Image, DataLoader, Dataset, transforms, _, mobilenet_v3_small = _require_training_stack()
     if device_name == "cuda" and not torch.cuda.is_available():
         raise ValueError("cuda_unavailable")
@@ -465,6 +467,7 @@ def evaluate_reader(
         raise ValueError(f"checkpoint_class_scheme_mismatch: the checkpoint is {scheme}, the plan "
                          f"{checkpoint_class_scheme(plan)} (--classes)")
     classifier = scheme == "v2"
+    codes = reader_country.countries_of(checkpoint)
 
     records = [r for r in plan["records"] if r["split"] == partition]
     if not records:
@@ -490,7 +493,7 @@ def evaluate_reader(
                 transforms.ToTensor(),
                 transforms.Normalize(mean=(.485, .456, .406), std=(.229, .224, .225)),
             ])
-            return transform(crop), row["label"], index
+            return transform(crop), row["label"], index, reader_country.country_index(codes, row.get("country"))
 
     loader = DataLoader(
         ReaderDataset(),
@@ -500,17 +503,16 @@ def evaluate_reader(
         pin_memory=device.type == "cuda",
     )
 
-    model = mobilenet_v3_small(weights=None)
-    model.classifier[-1] = torch.nn.Linear(model.classifier[-1].in_features, len(classes))
+    model = reader_country.build_reader(torch, mobilenet_v3_small, None, len(classes), codes)
     model.load_state_dict(checkpoint["state_dict"], strict=True)
     model.to(device)
     model.eval()
 
     samples = []
     with torch.no_grad():
-        for inputs, truth_labels, record_indices in loader:
+        for inputs, truth_labels, record_indices, country in loader:
             inputs = inputs.to(device, non_blocking=True)
-            logits = model(inputs)
+            logits = reader_country.batch_forward(torch, model, inputs, country)
             probabilities = torch.softmax(logits, dim=1)
             predictions = probabilities.argmax(1).cpu().tolist()
             confidences = probabilities.max(1).values.cpu().tolist()

@@ -148,7 +148,7 @@ def _signnet_step(cutter_contract: dict, cutter_score: float) -> dict:
 
 
 def pipeline(decider_contract: dict, cutter_score: float, max_sign_side: float | None, classifier_size: int,
-             cutter_contract: dict | None = None) -> dict:
+             cutter_contract: dict | None = None, classifier_contract: dict | None = None) -> dict:
     """How the three run in a row: a SignNet cutter (its contract's task) as the comma's vision.py runs it, an old
     Detector as Prepare's "ours" proposer ran it (nnslr_tools._chain_proposer)."""
     signnet = isinstance(cutter_contract, dict) and cutter_contract.get('task') == 'signnet'
@@ -164,7 +164,7 @@ def pipeline(decider_contract: dict, cutter_score: float, max_sign_side: float |
             {'network': 'classifier', 'input': f'each box cut from the frame (rounded outwards, at least 2 px), '
                                                f'resized to {classifier_size} x {classifier_size}, ImageNet '
                                                'normalisation; all the boxes of a frame in one batch',
-             'then': 'Drop the boxes called not_a_sign'},
+              'then': 'Drop the boxes called not_a_sign'},
             {'network': 'decider', 'input': 'the speed-sign boxes of the frame (families '
                                             + ', '.join(decider_contract.get('ownership_families', [])) + ') with '
                                             'their inputs as decider.onnx.contract.json says, in one call',
@@ -173,6 +173,8 @@ def pipeline(decider_contract: dict, cutter_score: float, max_sign_side: float |
         ],
         'cutter_score': cutter_score,
         'max_sign_side': None if signnet else max_sign_side,
+        **({'classifier_country': classifier_contract['country_input']} if classifier_contract
+           and 'country_input' in classifier_contract else {}),
         **({'max_boxes': CAR_MAX_BOXES, 'band': [cutter_contract['input']['shape'][3], cutter_contract['input']['shape'][2]],
             'stride': cutter_contract['stride']} if signnet else {}),
     }
@@ -543,7 +545,7 @@ def prepare_package(root: Path, name: str, *, log: Callable[[str], None] = print
             # The classifier's classes in the order of its output, for the model card (its contract has them too).
             'classes': (contracts['classifier'].get('output') or {}).get('classes'),
             'pipeline': pipeline(contracts['decider'], CAR_MIN_SCORE if signnet else CUTTER_SCORE,
-                                 None if signnet else MAX_SIGN_SIDE, classifier_size, contracts['cutter']),
+                                 None if signnet else MAX_SIGN_SIDE, classifier_size, contracts['cutter'], contracts['classifier']),
             'measured': measured(entries),
             'training_data': training_data(root, contracts['decider'].get('dataset_sha256')),
         }

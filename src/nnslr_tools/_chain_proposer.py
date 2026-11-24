@@ -54,7 +54,7 @@ def car_speed(root: Path, positions: dict, frame: dict, route: str) -> float | N
 def run(request: dict) -> None:
     import torch
     import torchvision.transforms.functional as TF
-    from nnslr_tools import chain
+    from nnslr_tools import chain, reader_country
     from nnslr_tools.chain import (CLASSIFIER_BATCH, _device, _load_classifier, _load_cutter, crop_cutter,
                                    cutter_boxes, cutter_kind)
     from nnslr_tools.context_experiment import Decider
@@ -76,8 +76,9 @@ def run(request: dict) -> None:
     # What the rows say of the cutter: a SignNet's band, stride and box cap; a Detector's own non-maximum suppression.
     found_by = ({'cutter_kind': kind, 'band': list(cutter.band), 'stride': cutter.stride, 'max_boxes': CAR_MAX_BOXES}
                 if kind == 'signnet' else {'cutter_kind': kind, 'input_size': input_size, 'nms_iou': .5})
-    classifier, _, classes, transform = _load_classifier({'path': Path(proposer['classifier_path']),
-                                                          'id': proposer['classifier']}, device)
+    classifier, classifier_checkpoint, classes, transform = _load_classifier({'path': Path(proposer['classifier_path']),
+                                                           'id': proposer['classifier']}, device)
+    use_country = bool(reader_country.countries_of(classifier_checkpoint))
     decider = Decider(Path(proposer['decider_path']), device)
     # The speed of the car at each frame, when nnslr gps has run for its route (Propose again); else the decider is
     # told it is missing, as for the training rows without one.
@@ -97,6 +98,7 @@ def run(request: dict) -> None:
             height, width = int(pixels.shape[1]), int(pixels.shape[2])
             image = TF.to_pil_image(pixels)
             cut = crop_cutter(root, frame, pixels)
+            country = reader_country.frame_country(root, positions, frame, request['route_id']) if use_country and boxes else None
             detections = []
             for start in range(0, len(boxes), CLASSIFIER_BATCH):
                 chunk = boxes[start:start + CLASSIFIER_BATCH]
@@ -104,7 +106,8 @@ def run(request: dict) -> None:
                 for item in chunk:
                     crops.append(transform(cut(crop_rectangle(item['box'], width, height))))
                 with torch.no_grad():
-                    probabilities = torch.softmax(classifier(torch.stack(crops).to(device)).float(), dim=1)
+                    logits = reader_country.frame_forward(torch, classifier, torch.stack(crops).to(device), country)
+                    probabilities = torch.softmax(logits.float(), dim=1)
                 for item, index, confidence in zip(chunk, probabilities.argmax(1).tolist(),
                                                    probabilities.max(1).values.tolist()):
                     proposal = proposal_of(classes[index])

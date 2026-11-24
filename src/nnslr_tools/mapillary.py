@@ -443,6 +443,8 @@ def training_records(path: Path, classes: set[str], other_kinds: set[str], *, re
         from nnslr_tools.training import _sha256
         locations_file = {"file": str(where), "sha256": _sha256(where),
                           "located_photos": sum(1 for row in locations.values() if row.get("latitude") is not None)}
+    elif (where := locations_path_of(path)).is_file():
+        locations = read_locations(where)  # Country is a hint, not a geographical filter.
     by_label: dict[str, list[dict[str, Any]]] = {}
     left_out: Counter = Counter()
     folded: Counter = Counter()
@@ -489,6 +491,7 @@ def training_records(path: Path, classes: set[str], other_kinds: set[str], *, re
                 "value_kph": int(value) if value.isdigit() and row.get("design", "g1") == "g1" else None,
                 "sign_value": int(value) if value.isdigit() else None, "sign_unit": row.get('sign_unit','unknown'),
                 "mtsd_label": row.get('mtsd_label'), "design": row.get('design'),
+                "country": (locations.get(str(row.get("mtsd_image"))) or {}).get("country"),
                 "route_id": None, "segment_index": None, "decoded_frame_index": None,
                 "label_basis": LABEL_BASIS, "source": LABEL_BASIS, "mtsd_object": row.get("mtsd_object"),
             })

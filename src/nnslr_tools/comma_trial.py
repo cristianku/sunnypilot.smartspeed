@@ -217,8 +217,11 @@ class Onnx:
         self.inputs = [(item.name, list(item.shape)) for item in self.session.get_inputs()]
         self.outputs = [(item.name, list(item.shape)) for item in self.session.get_outputs()]
 
-    def __call__(self, x):
+    def __call__(self, x=None, **inputs):
         import numpy as np
+        if inputs:
+            feed = {name: np.asarray(value, dtype=np.float32) for name, value in inputs.items()}
+            return dict(zip((name for name, _ in self.outputs), self.session.run(None, feed), strict=True))
         return self.session.run(None, {self.inputs[0][0]: np.asarray(x, dtype=np.float32)})[0]
 
 
@@ -254,9 +257,10 @@ def _fits(actual: list, wanted: list) -> bool:
     return len(actual) == len(wanted) and all(not isinstance(a, int) or a == w for a, w in zip(actual, wanted))
 
 
-def contract_problems(vision, folder: Path, networks: dict) -> list[str]:
+def contract_problems(vision, folder: Path, networks: dict, *, supports_classifier_country: bool = False) -> list[str]:
     """Where the export does not fit the comma's code (empty: it fits). networks: the ONNX of each, as Onnx."""
     import numpy as np
+    from nnslr_tools.reader_country import contract_codes
     missing = [name for name in VISION_NAMES if not hasattr(vision, name)]
     if missing:
         return [f"the comma's vision.py has no {', '.join(missing)}"]
@@ -282,6 +286,17 @@ def contract_problems(vision, folder: Path, networks: dict) -> list[str]:
     crop = [1, 3, size, size]
     if _ints((reader.get('input') or {}).get('shape')) != crop or not _fits(networks['classifier'].inputs[0][1], crop):
         problems.append(f'the classifier takes {(reader.get("input") or {}).get("shape")}, the comma gives it {crop}')
+    try:
+        codes = contract_codes(reader)
+    except ValueError as exc:
+        problems.append(str(exc))
+        codes = ()
+    country_inputs = networks['classifier'].inputs[1:]
+    if codes and not supports_classifier_country:
+        problems.append("the comma's build does not support the classifier's country input")
+    if (codes and (len(country_inputs) != 1 or country_inputs[0][0] != 'country'
+                   or not _fits(country_inputs[0][1], [1, len(codes)]))) or (not codes and country_inputs):
+        problems.append("the classifier's ONNX country input does not match its contract")
     normalization = (reader.get('input') or {}).get('normalization') or {}
     for key, wanted in (('mean', vision.CLASSIFIER_MEAN), ('std', vision.CLASSIFIER_STD)):
         value = normalization.get(key)
@@ -316,7 +331,8 @@ def speed_frames(root: Path, count: int = FRAMES) -> list[dict]:
     partition first (the networks never trained on them), reviewed by a person first, every speed sign whole in the
     frame and in the band SignNet reads, the widest 36 to 72 px (a sign at a usual distance: neither far nor right
     beside the car), the nearest to 50 px first, a drive each while there are others.
-    [{'image', 'name', 'speeds', 'route'}]."""
+    [{'image', 'name', 'speeds', 'route', optional 'country'}]."""
+    from nnslr_tools.reader_country import UNKNOWN, frame_country
     from nnslr_tools.training import ELIGIBLE_REVIEW_STATES
     root = Path(root)
     dataset = root / 'annotations' / 'objects.jsonl'
@@ -342,6 +358,7 @@ def speed_frames(root: Path, count: int = FRAMES) -> list[dict]:
         x1, _, x2, y2 = (float(v) for v in box)
         frame = frames.setdefault(str(relative), {
             'image': root / relative, 'name': str(relative), 'speeds': set(), 'route': row.get('route_id'),
+            'position': row,
             'width': 0.0, 'fits': True, 'test': assignments.get(row.get('annotation_id')) == 'test',
             'person': (row.get('provenance') or {}).get('label_basis') == 'human_review'})
         # Every speed sign of the frame: a number, whole in the frame, in the band (288 rows of it scaled to 896).
@@ -363,7 +380,13 @@ def speed_frames(root: Path, count: int = FRAMES) -> list[dict]:
                 continue
             chosen.append(frame)
             routes.add(frame['route'])
-    return [{'image': f['image'], 'name': f['name'], 'speeds': sorted(f['speeds']), 'route': f['route']} for f in chosen]
+    positions: dict = {}
+    for frame in chosen:
+        code = frame_country(root, positions, frame['position'])
+        if code != UNKNOWN:
+            frame['country'] = code
+    return [{'image': f['image'], 'name': f['name'], 'speeds': sorted(f['speeds']), 'route': f['route'],
+             **({'country': f['country']} if f.get('country') else {})} for f in chosen]
 
 
 def nv12_of(rgb):
@@ -389,13 +412,17 @@ def read_frames(vision, folder: Path, frames: list[dict], networks: dict) -> lis
     """The comma's read_signs on each frame, with both networks: what it reads, and whether the confirmed speed is
     among it."""
     from PIL import Image
-    classes = json.loads((folder / (FILES['classifier'] + '.contract.json')).read_text(encoding='utf-8'))['output']['classes']
+    from nnslr_tools.reader_country import contract_codes, network_for_country
+
+    contract = json.loads((folder / (FILES['classifier'] + '.contract.json')).read_text(encoding='utf-8'))
+    classes, codes = contract['output']['classes'], contract_codes(contract)
     readings = []
     for frame in frames:
         with Image.open(frame['image']) as image:
             y, uv = nv12_of(image.convert('RGB'))
         band = vision.SignNetInput(y.shape[1], y.shape[0])
-        signs = vision.read_signs(y, uv, band, networks['finder'], networks['classifier'], classes)
+        classifier = network_for_country(networks['classifier'], codes, frame.get('country'))
+        signs = vision.read_signs(y, uv, band, networks['finder'], classifier, classes)
         read = sorted({float(sign['speed']) for sign in signs if sign.get('speed') is not None})
         readings.append({'name': frame.get('name') or Path(frame['image']).name, 'speeds': frame['speeds'], 'read': read,
                          'right': any(speed in read for speed in frame['speeds'])})
@@ -403,12 +430,12 @@ def read_frames(vision, folder: Path, frames: list[dict], networks: dict) -> lis
 
 
 def check_networks(root: Path, vision_path: Path, folder: Path, *, say: Callable[[str], None] = _say,
-                   frames: list[dict] | None = None) -> None:
+                   frames: list[dict] | None = None, supports_classifier_country: bool = False) -> None:
     """Step 3: the contracts against the comma's vision.py, then its read_signs on reviewed frames; raises CommaError
     (nothing is copied then)."""
     vision = load_vision(vision_path)
     networks = {network: Onnx(folder / name) for network, name in FILES.items()}
-    problems = contract_problems(vision, folder, networks)
+    problems = contract_problems(vision, folder, networks, supports_classifier_country=supports_classifier_country)
     if problems:
         raise CommaError('these networks do not fit the build on the comma: ' + '; '.join(problems) + f'; {BUILD_NEEDED}')
     say(f'contracts: SignNet {vision.SIGNNET_HEIGHT} x {vision.SIGNNET_WIDTH}, grid {vision.SIGNNET_STRIDE} px; '
@@ -449,7 +476,10 @@ def copy_files(comma: Comma, folder: Path, version: str, settings: dict | None =
     brain, decider = ('yes' in comma.run('cd ' + _q(comma.models) + f' && test -f {file} && '
                                          f'test -f {file}.contract.json && echo yes || true')
                       for file in (BRAIN_FILE, DECIDER_FILE))
-    (folder / MANIFEST).write_text(json.dumps(manifest_of(version, settings, brain, decider), indent=2) + '\n',
+    from nnslr_tools.road_type_signs import classifier_countries
+
+    country = bool(classifier_countries(folder / FILES['classifier']))
+    (folder / MANIFEST).write_text(json.dumps(manifest_of(version, settings, brain, decider, country), indent=2) + '\n',
                                    encoding='utf-8')
     names.append(MANIFEST)
     try:
@@ -608,7 +638,15 @@ def try_on_comma(root: Path, signnet: Any, *, classifier: Any = None, comma: Com
         for network in FILES:
             say(f'{network}: {exported[network]["id"]} onnx sha256 {exported[network]["onnx_sha256"]}')
         say("== 3/5 Check them with the comma's code")
-        check_networks(root, vision_path, folder, say=say, frames=frames)
+        from nnslr_tools.road_type_signs import classifier_countries
+
+        if classifier_countries(folder / FILES['classifier']):
+            daemon_path = folder / 'comma-speedvisiond.py'
+            comma.get(f'{comma.openpilot}/{PACKAGE}/speedvisiond.py', daemon_path)
+            supports_country = 'classifier_countries' in daemon_path.read_text('utf-8')
+            check_networks(root, vision_path, folder, say=say, frames=frames, supports_classifier_country=supports_country)
+        else:
+            check_networks(root, vision_path, folder, say=say, frames=frames)
         if dry_run:
             say('dry run: they fit the comma; nothing copied, nothing recorded')
             return {'outcome': 'dry_run', 'record': None}
@@ -714,4 +752,3 @@ class CommaProbe:
                 self.thread = threading.Thread(target=self._check, name='comma-probe', daemon=True)
                 self.thread.start()
             return self.answer
-

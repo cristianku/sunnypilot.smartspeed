@@ -462,6 +462,7 @@ def mine_negatives(dataset_path: Path, split_path: Path, data_root: Path, cutter
 
 # -- the chain ---------------------------------------------------------------------------------------------
 def _load_classifier(resolved: dict[str, Any], device):
+    from nnslr_tools import reader_country
     from nnslr_tools.evaluation import _load_checkpoint
     from nnslr_tools.training import _require_training_stack
 
@@ -470,8 +471,8 @@ def _load_classifier(resolved: dict[str, Any], device):
     classes = checkpoint.get("classes")
     if not isinstance(classes, list) or not classes or not all(isinstance(v, str) for v in classes):
         raise ValueError("checkpoint_invalid_classes")
-    model = mobilenet_v3_small(weights=None)
-    model.classifier[-1] = torch.nn.Linear(model.classifier[-1].in_features, len(classes))
+    model = reader_country.build_reader(torch, mobilenet_v3_small, None, len(classes),
+                                       reader_country.countries_of(checkpoint))
     model.load_state_dict(checkpoint["state_dict"], strict=True)
     model.to(device)
     model.eval()
@@ -662,7 +663,11 @@ def evaluate_chain(dataset_path: Path, split_path: Path, data_root: Path, cutter
     scheme = checkpoint_class_scheme(checkpoint)
     folded = checkpoint.get("folded_labels") if isinstance(checkpoint.get("folded_labels"), dict) else {}
 
+    from nnslr_tools import reader_country
+
     tallies = {value: ChainTally() for value in thresholds}
+    positions: dict = {}
+    use_country = bool(reader_country.countries_of(checkpoint))
     images = []
     for frame, pixels, predictions in cutter_boxes(cutter_model, device, frames, data_root, min_score=thresholds[0],
                                                    batch_size=batch_size, num_workers=num_workers, task="chain"):
@@ -675,6 +680,7 @@ def evaluate_chain(dataset_path: Path, split_path: Path, data_root: Path, cutter
             predictions = [item for item in predictions
                            if all(box_overlap(item["box"], box) < iou_threshold for box in unlabelled)]
         cut = crop_cutter(data_root, frame, pixels)
+        country = reader_country.frame_country(data_root, positions, frame) if use_country and predictions else None
         # Every box of the lowest threshold, cut from the frame at full resolution and classified once.
         for start in range(0, len(predictions), CLASSIFIER_BATCH):
             chunk = predictions[start:start + CLASSIFIER_BATCH]
@@ -682,7 +688,8 @@ def evaluate_chain(dataset_path: Path, split_path: Path, data_root: Path, cutter
             for item in chunk:
                 crops.append(transform(cut(crop_rectangle(item["box"], width, height))))
             with torch.no_grad():
-                probabilities = torch.softmax(model(torch.stack(crops).to(device)).float(), dim=1)
+                logits = reader_country.frame_forward(torch, model, torch.stack(crops).to(device), country)
+                probabilities = torch.softmax(logits.float(), dim=1)
             for item, index, confidence in zip(chunk, probabilities.argmax(1).tolist(),
                                                probabilities.max(1).values.tolist()):
                 item["predicted"], item["confidence"] = classes[index], float(confidence)

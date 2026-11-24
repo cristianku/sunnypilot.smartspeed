@@ -1055,7 +1055,8 @@ def replay(root: Path, route: str, set_key: str, *, device: str = 'cuda', packag
     width, height = FRAME_SIZE if reduce else size
 
     taken = car.vision.apply_settings(files.settings)
-    finder, classifier = OneNetwork(files.finder, device), OneNetwork(files.classifier, device)
+    finder = OneNetwork(files.finder, device)
+    classifier = (StepNetwork if getattr(files, 'classifier_countries', ()) else OneNetwork)(files.classifier, device)
     brain_network = StepNetwork(files.brain, device) if files.brain is not None else None
     reader = car.brain.BrainReader(brain_network, files.brain_contract, car.vision, width, height) if brain_network else None
     head = load_type_head(root, files.brain_contract) if reader is not None else None

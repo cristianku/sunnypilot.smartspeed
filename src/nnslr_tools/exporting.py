@@ -21,8 +21,9 @@ def _export_onnx(module, example, output_path: Path, *, input_names: list[str], 
     """
     import torch
 
+    args = example if isinstance(example, tuple) else (example,)
     try:
-        program = torch.onnx.export(module, (example,), input_names=input_names, output_names=output_names,
+        program = torch.onnx.export(module, args, input_names=input_names, output_names=output_names,
                                     dynamo=True, external_data=False)
         program.save(str(output_path))
         return
@@ -33,7 +34,7 @@ def _export_onnx(module, example, output_path: Path, *, input_names: list[str], 
     except Exception as exc:  # torch.export refuses the graph: the TorchScript exporter below
         print(f"torch.export could not export {type(module).__name__} ({type(exc).__name__}); "
               f"using the TorchScript ONNX exporter", flush=True)
-    torch.onnx.export(module, (example,), str(output_path), input_names=input_names, output_names=output_names,
+    torch.onnx.export(module, args, str(output_path), input_names=input_names, output_names=output_names,
                       dynamo=False, opset_version=17)
 
 
@@ -67,12 +68,15 @@ def sha256_file(path: Path) -> str:
 
 
 def reader_io_contract(checkpoint: dict[str, Any]) -> dict[str, Any]:
+    from nnslr_tools.reader_country import countries_of
+
     classes = checkpoint.get("classes")
     input_size = checkpoint.get("input_size")
     if not isinstance(classes, list) or not classes or not all(isinstance(v, str) for v in classes):
         raise ValueError("checkpoint_invalid_classes")
     if type(input_size) is not int or input_size <= 0:
         raise ValueError("checkpoint_invalid_input_size")
+    codes = countries_of(checkpoint)
     return {
         "schema_version": 1,
         "task": "reader",
@@ -90,6 +94,8 @@ def reader_io_contract(checkpoint: dict[str, Any]) -> dict[str, Any]:
                 "std": [0.229, 0.224, 0.225],
             },
         },
+        **({"country_input": {"name": "country", "shape": [1, len(codes)], "dtype": "float32",
+                              "encoding": "one_hot", "codes": list(codes)}} if codes else {}),
         "output": {
             "name": "logits",
             "shape": [1, len(classes)],
@@ -281,6 +287,8 @@ def export_reader_onnx(
     *,
     verify: bool = True,
 ) -> dict[str, Any]:
+    from nnslr_tools import reader_country
+
     torch, _, _, _, _, _, mobilenet_v3_small = _require_training_stack()
     checkpoint = safe_torch_load(Path(checkpoint_path))
     if not isinstance(checkpoint, dict) or checkpoint.get("task") != "reader":
@@ -289,16 +297,18 @@ def export_reader_onnx(
     classes = contract["output"]["classes"]
     input_size = contract["input"]["resize"][0]
 
-    model = mobilenet_v3_small(weights=None)
-    model.classifier[-1] = torch.nn.Linear(model.classifier[-1].in_features, len(classes))
+    codes = reader_country.countries_of(checkpoint)
+    model = reader_country.build_reader(torch, mobilenet_v3_small, None, len(classes), codes)
     model.load_state_dict(checkpoint["state_dict"], strict=True)
     model.eval()
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    example = torch.randn(1, 3, input_size, input_size, dtype=torch.float32)
-
-    _export_onnx(model, example, output_path, input_names=["images"], output_names=["logits"])
+    images = torch.randn(1, 3, input_size, input_size, dtype=torch.float32)
+    countries = torch.eye(len(codes))
+    example = (images, countries[:1]) if codes else (images,)
+    names = ["images", "country"] if codes else ["images"]
+    _export_onnx(model, example, output_path, input_names=names, output_names=["logits"])
 
     try:
         import onnx
@@ -313,13 +323,22 @@ def export_reader_onnx(
             import onnxruntime as ort
         except ImportError as exc:
             raise ValueError("onnxruntime_missing") from exc
-        with torch.no_grad():
-            expected = model(example).detach().cpu().numpy()
-        session = ort.InferenceSession(str(output_path), providers=onnx_device.check_providers(ort))
-        actual = session.run(["logits"], {"images": example.numpy()})[0]
+        providers = onnx_device.check_providers(ort)
+        session = ort.InferenceSession(str(output_path), sess_options=onnx_device.session_options(ort), providers=providers)
         import numpy as np
-        max_abs_error = float(np.max(np.abs(expected - actual)))
-        passed = bool(np.allclose(expected, actual, rtol=1e-4, atol=1e-5))
+        max_abs_error, passed = 0.0, True
+        probes = [(images, row.unsqueeze(0)) for row in countries] if codes else [example]
+        if codes and not onnx_device.on_gpu(session) and providers != [onnx_device.CPU]:
+            raise RuntimeError("the classifier export check could not run on the GPU")
+        if codes:
+            model.to("cuda" if onnx_device.on_gpu(session) else "cpu")
+        device = next(model.parameters()).device
+        with torch.no_grad():
+            for probe in probes:
+                expected = model(*(x.to(device) for x in probe)).detach().cpu().numpy()
+                actual = session.run(["logits"], {name: x.numpy() for name, x in zip(names, probe, strict=True)})[0]
+                max_abs_error = max(max_abs_error, float(np.max(np.abs(expected - actual))))
+                passed &= bool(np.allclose(expected, actual, rtol=1e-4, atol=1e-5))
         verification = {
             "enabled": True,
             "passed": passed,

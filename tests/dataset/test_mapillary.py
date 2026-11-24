@@ -598,13 +598,13 @@ import sys
 import torch
 from torchvision.models import mobilenet_v3_small
 from nnslr_tools.checkpoints import safe_torch_load
+from nnslr_tools.reader_country import build_reader, countries_of
 from nnslr_tools.training import _load_start
 saved = safe_torch_load(sys.argv[1])
 assert saved["mapillary_only"] is True and saved["start"] is None and saved["initialization"] == "random"
 # Another order of the classes and one the start lacks: every layer copied, the head row by row by class name.
 classes = list(reversed(saved["classes"])) + ["maximum_speed:999"]
-model = mobilenet_v3_small()
-model.classifier[-1] = torch.nn.Linear(model.classifier[-1].in_features, len(classes))
+model = build_reader(torch, mobilenet_v3_small, None, len(classes), countries_of(saved))
 fresh = model.state_dict()["classifier.3.weight"][-1].clone()
 _load_start(torch, model, saved, classes, saved["input_size"], "classifier", sys.argv[1])
 state, weights = model.state_dict(), saved["state_dict"]

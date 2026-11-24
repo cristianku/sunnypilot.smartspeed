@@ -565,6 +565,7 @@ def _record(row: dict[str, Any], split: str, label: str, source: str, **extra: A
         **{k: row[k] for k in ('sign_value', 'sign_unit') if k in row},
         "route_id": row.get("route_id"),
         "segment_index": row.get("segment_index"),
+        "output_index": row.get("output_index"),
         "decoded_frame_index": row.get("decoded_frame_index"),
         "label_basis": _label_basis(row),
         "source": source,
@@ -629,7 +630,8 @@ def _mined_negatives(negatives_path: Path, loaded: dict[str, Any], frames: list[
             "annotation_id": None, "split": frame["split"], "image_path": frame["image_path"],
             "image_sha256": frame["image_sha256"], "bbox_xyxy": [float(value) for value in row["bbox_xyxy"]],
             "label": NOT_A_SIGN, "sign_family": None, "sign_type": None, "value_state": None, "value_kph": None,
-            "route_id": frame["route_id"], "segment_index": frame["segment_index"], "decoded_frame_index": None,
+            "route_id": frame["route_id"], "segment_index": frame["segment_index"], "output_index": frame["output_index"],
+            "decoded_frame_index": None,
             "label_basis": frame["label_basis"], "source": "mined", "tier": frame["tier"],
             "frame_label_basis": frame["label_basis"], "score": row.get("score"),
             "negative_id": row.get("negative_id") or negative_id(frame["image_sha256"], row["bbox_xyxy"]),
@@ -735,6 +737,14 @@ def _prepare_classifier(loaded: dict[str, Any], dataset_path: Path, split_path: 
     # in its list already, so from a classifier of ours it lost every label of validation Mapillary lacks (#104).
     unseen_validation = sorted(set(val_labels) - set(train_labels) - set((start or {}).get("classes") or []))
     records, skipped = _without_unseen_validation(records, unseen_validation, skipped)
+    from nnslr_tools import reader_country
+
+    positions: dict[str, dict] = {}
+    for record in records:
+        if record.get("route_id"):
+            record["country"] = reader_country.frame_country(data_root, positions, record)
+    country_codes = sorted(({r.get("country") for r in records if r["split"] == TRAIN_SPLIT}
+                            | set(reader_country.countries_of(start or {}))) - {None, reader_country.UNKNOWN})
     counts_by_split = Counter(r["split"] for r in records)
     counts_by_class = Counter(r["label"] for r in records if r["split"] == TRAIN_SPLIT)
     positives = Counter(r["split"] for r in records if r["label"] != NOT_A_SIGN)
@@ -792,6 +802,7 @@ def _prepare_classifier(loaded: dict[str, Any], dataset_path: Path, split_path: 
         "requested_split_path": str(split_path),
         "split_sha256": loaded["split_sha256"],
         "classes": classes,
+        "country_codes": [reader_country.UNKNOWN, *country_codes],
         "records": records,
         "counts_by_split": dict(sorted(counts_by_split.items())),
         "positives_by_split": dict(sorted(positives.items())),
@@ -1203,14 +1214,22 @@ def _load_start(torch, model, saved: dict[str, Any], classes: list[str], input_s
         raise ValueError("the start is not a v2 classifier")
     if saved.get("input_size") != input_size:
         raise ValueError(f"the start has input size {saved.get('input_size')}, this run {input_size}")
+    from nnslr_tools import reader_country
+
     weights = model_weights(saved)
     state = {key: value.detach().clone() for key, value in model.state_dict().items()}
     head = f"classifier.{len(model.classifier) - 1}."
-    body = {key for key in state if not key.startswith(head)}
-    if body != {key for key in weights if not key.startswith(head)}:
+    projection = reader_country.PROJECTION
+    body = {key for key in state if not key.startswith(head) and key != projection}
+    if body != {key for key in weights if not key.startswith(head) and key != projection}:
         raise ValueError("the start's layers are not those of this network")
     for key in body:
         state[key] = weights[key]
+    if projection in state and projection in weights:
+        old_codes = reader_country.countries_of(saved)
+        for col, code in enumerate(model.country_codes):
+            if code in old_codes:
+                state[projection][:, col] = weights[projection][:, old_codes.index(code)]
     rows = {label: row for row, label in enumerate(saved.get("classes") or [])}
     carried = [label for label in classes if label in rows]
     for row, label in enumerate(classes):
@@ -2111,7 +2130,10 @@ def reader_start(path: Path) -> dict[str, Any]:
         raise ValueError(f"the start is not a reader/classifier checkpoint: {path}")
     if not isinstance(saved.get("classes"), list) or not saved["classes"]:
         raise ValueError(f"the start has no classes: {path}")
+    from nnslr_tools.reader_country import countries_of
+
     return {"path": str(path), "sha256": _sha256(path), "classes": list(saved["classes"]),
+            "country_codes": list(countries_of(saved)),
             "class_scheme": checkpoint_class_scheme(saved), "input_size": saved.get("input_size"),
             "split_sha256": saved.get("split_sha256"), "dataset_sha256": saved.get("dataset_sha256"),
             "epoch": saved.get("epoch"), "initialization": saved.get("initialization"),
@@ -2159,6 +2181,7 @@ def train_reader(
     torch, _, DataLoader, Dataset, transforms, Weights, mobilenet_v3_small = _require_training_stack()
     import torchvision
     from torchvision.transforms import functional as TF
+    from nnslr_tools import reader_country
 
     if config.device == "cuda" and not torch.cuda.is_available():
         raise ValueError("cuda_unavailable")
@@ -2188,6 +2211,13 @@ def train_reader(
 
     train_records = [r for r in plan["records"] if r["split"] == TRAIN_SPLIT]
     val_records = [r for r in plan["records"] if r["split"] == VALIDATION_SPLIT]
+    checkpoint_path = Path(output_dir) / "training-state.pt"
+    resumed = torch_load(checkpoint_path) if mode == "resume" and checkpoint_path.is_file() else None
+    codes = reader_country.countries_of(plan)
+    if resumed is not None and "country_codes" not in resumed:
+        codes = ()  # Finish a run started before the country input was introduced.
+    country_metadata = {"country_codes": list(codes)} if codes else {}
+    country_sha256 = reader_country.assignments_digest(train_records + val_records, codes) if codes else None
     # Every crop cut from its frame once (nnslr_tools.crop_cache): an epoch reads small arrays, not full frames.
     import numpy as np
     from torchvision.transforms import InterpolationMode
@@ -2212,6 +2242,7 @@ def train_reader(
             self.records = records
             self.first = first
             self.training = training
+            self.countries = [reader_country.country_index(codes, row.get("country")) for row in records]
             pipeline = [transforms.Resize((config.input_size, config.input_size))]
             if training and not augment:
                 pipeline.extend([
@@ -2255,7 +2286,12 @@ def train_reader(
             if self.training and augment:
                 generator = torch.Generator().manual_seed(_sample_seed("photometric", config.seed, epoch, index))
                 draws = photometric_draws(torch, generator, CLASSIFIER_AUGMENTATION)
-            return pixels, torch.tensor(draws, dtype=torch.float32), class_to_index[label]
+            country = self.countries[index]
+            if paint is not None or (self.training and country and
+                    random.Random(_sample_seed("country", config.seed, epoch, index)).random()
+                    < reader_country.COUNTRY_DROPOUT):
+                country = 0
+            return pixels, torch.tensor(draws, dtype=torch.float32), class_to_index[label], country
 
     class EpochSampler(torch.utils.data.Sampler):
         """The train crops of an epoch in the order of seed + epoch, as keys of CropDataset."""
@@ -2310,8 +2346,7 @@ def train_reader(
     )
 
     weights = Weights.IMAGENET1K_V1 if config.pretrained and mode == "fresh" and not start else None
-    model = mobilenet_v3_small(weights=weights)
-    model.classifier[-1] = torch.nn.Linear(model.classifier[-1].in_features, len(classes))
+    model = reader_country.build_reader(torch, mobilenet_v3_small, weights, len(classes), codes)
     if start and mode == "fresh":
         _load_start(torch, model, torch_load(Path(config.init_from)), classes, config.input_size, name,
                     config.init_from)
@@ -2349,7 +2384,6 @@ def train_reader(
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 
     output_dir = Path(output_dir)
-    checkpoint_path = output_dir / "training-state.pt"
     if mode not in ("fresh", "continue", "resume"):
         raise ValueError(f"invalid training mode: {mode}")
     if mode == "resume" and not checkpoint_path.is_file():
@@ -2395,10 +2429,13 @@ def train_reader(
             raise ValueError("stable weight task/architecture mismatch")
         if saved.get("classes") != classes or saved.get("input_size") != config.input_size:
             raise ValueError("stable reader classes/input size mismatch")
-        model.load_state_dict(model_weights(saved), strict=True)
+        if classifier:
+            _load_start(torch, model, saved, classes, config.input_size, name, origin)
+        else:
+            model.load_state_dict(model_weights(saved), strict=True)
         print(f"continue {name} from weights: {origin}")
     elif mode == "resume":
-        saved = torch_load(checkpoint_path)
+        saved = resumed
         if saved.get("format_version") != 1 or saved.get("task") != "reader":
             raise ValueError("invalid reader training-state checkpoint")
         if saved.get("status") == "completed":
@@ -2412,6 +2449,8 @@ def train_reader(
             raise ValueError("resume dataset/split mismatch")
         if saved.get("classes") != classes:
             raise ValueError("resume reader classes mismatch")
+        if reader_country.countries_of(saved) != codes or saved.get("country_sha256") != country_sha256:
+            raise ValueError("resume country input mismatch: the GPS country assignments changed")
         if classifier and saved.get("negatives_sha256") != plan.get("negatives_sha256"):
             raise ValueError("resume negatives mismatch: the run started with another negatives file")
         if classifier and saved.get("start_sha256") != (start or {}).get("sha256"):
@@ -2446,6 +2485,8 @@ def train_reader(
             "dataset_sha256": plan["dataset_sha256"],
             "split_sha256": plan["split_sha256"],
             "class_scheme": scheme,
+            **country_metadata,
+            "country_sha256": country_sha256,
             "negatives_sha256": plan.get("negatives_sha256"),
             "mapillary_sha256": plan.get("mapillary_sha256"),
             "mapillary_selection_sha256": plan.get("mapillary_selection_sha256"),
@@ -2488,7 +2529,10 @@ def train_reader(
               f"{sum(1 for r in val_records if r['label'] != NOT_A_SIGN)} and "
               f"{sum(1 for r in val_records if r['label'] == NOT_A_SIGN)} in validation; {len(classes)} classes; "
               f"not_a_sign loss weight {loss_weights[NOT_A_SIGN]:.3f}; augmentation {'on' if augment else 'off'}; "
-              f"best epoch by validation balanced accuracy (signs read right, not_a_sign rejected)", flush=True)
+               f"best epoch by validation balanced accuracy (signs read right, not_a_sign rejected)", flush=True)
+        if codes:
+            print(f"classifier country input: {', '.join(codes)} "
+                  f"({reader_country.COUNTRY_DROPOUT:.0%} country dropout in train)", flush=True)
     if synthetic:
         print(f"classifier draws an end of limit over {synthetic_signs.SHARE:.0%} of the "
               f"{augmentation['synthetic_end_of_limit']['paintable_train_crops']} speed signs of train each epoch "
@@ -2508,7 +2552,7 @@ def train_reader(
             step_start = time.perf_counter()
             batch_count = len(train_loader)
             batch_index = 0
-            for pixels, draws, targets in train_loader:
+            for pixels, draws, targets, country in train_loader:
                 # Where the training is, batch by batch, for the panel of the review site.
                 batch_index += 1
                 report_progress(name, epoch * batch_count + batch_index, config.epochs * batch_count,
@@ -2517,7 +2561,7 @@ def train_reader(
                 targets = targets.to(device, non_blocking=True)
                 optimizer.zero_grad(set_to_none=True)
                 with torch.cuda.amp.autocast(enabled=use_amp):
-                    logits = model(inputs)
+                    logits = reader_country.batch_forward(torch, model, inputs, country)
                     loss = criterion(logits, targets)
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
@@ -2549,11 +2593,11 @@ def train_reader(
             # v2: the sign crops read right and the not_a_sign crops rejected.
             sign_seen = sign_correct = negative_seen = negative_rejected = 0
             with torch.no_grad():
-                for pixels, _, targets in val_loader:
+                for pixels, _, targets, country in val_loader:
                     inputs = batch_inputs(pixels, None)
                     targets = targets.to(device, non_blocking=True)
                     with torch.cuda.amp.autocast(enabled=use_amp):
-                        logits = model(inputs)
+                        logits = reader_country.batch_forward(torch, model, inputs, country)
                         loss = criterion(logits, targets)
                     predicted = logits.argmax(1)
                     val_loss += float(loss.detach()) * targets.numel()
@@ -2598,6 +2642,7 @@ def train_reader(
                     "architecture": "mobilenet_v3_small",
                     "task": "reader",
                     "class_scheme": scheme,
+                    **country_metadata,
                     "classes": classes,
                     "input_size": config.input_size,
                     "state_dict": model.state_dict(),
@@ -2672,6 +2717,7 @@ def train_reader(
         result = {
             "task": "reader",
             "architecture": "mobilenet_v3_small",
+            **country_metadata,
             "class_scheme": scheme,
             "classes": classes,
             # v1: the best validation accuracy, which chose the epoch; v2: the accuracy on every validation crop at

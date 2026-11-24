@@ -129,6 +129,8 @@ def load_route_frames(data_root: Path, route_id: str) -> tuple[list[dict[str, An
 
 
 def _load_models(detector_checkpoint: Path, reader_checkpoint: Path, device_name: str):
+    from nnslr_tools import reader_country
+
     (
         torch,
         Image,
@@ -164,8 +166,8 @@ def _load_models(detector_checkpoint: Path, reader_checkpoint: Path, device_name
     if not isinstance(classes, list) or not classes:
         raise ValueError("checkpoint_invalid_classes")
     input_size = int(reader_payload.get("input_size", 160))
-    reader = mobilenet_v3_small(weights=None)
-    reader.classifier[-1] = torch.nn.Linear(reader.classifier[-1].in_features, len(classes))
+    reader = reader_country.build_reader(torch, mobilenet_v3_small, None, len(classes),
+                                        reader_country.countries_of(reader_payload))
     reader.load_state_dict(reader_payload["state_dict"], strict=True)
     reader.to(device).eval()
     reader_transform = transforms.Compose([
@@ -188,6 +190,8 @@ def replay_route(
     reader_threshold: float = 0.0,
     max_detections: int = 20,
 ) -> dict[str, Any]:
+    from nnslr_tools import reader_country
+
     if not 0 <= detector_threshold <= 1 or not 0 <= reader_threshold <= 1:
         raise ValueError("invalid_confidence_threshold")
     if type(max_detections) is not int or max_detections < 1:
@@ -210,6 +214,8 @@ def replay_route(
     rows = []
     detection_count = 0
     supported_count = 0
+    positions: dict = {}
+    use_country = bool(reader_country.countries_of(reader_payload))
     with torch.no_grad():
         for frame in frames:
             path = _safe_frame_path(Path(data_root), frame["image_path"])
@@ -228,6 +234,8 @@ def replay_route(
                 ][:max_detections]
 
                 detections = []
+                country = (reader_country.frame_country(Path(data_root), positions, frame, route_id)
+                           if use_country and candidates else None)
                 for box, detector_score in candidates:
                     x1, y1, x2, y2 = box
                     x1 = max(0, min(image.width - 1, int(x1)))
@@ -235,7 +243,8 @@ def replay_route(
                     x2 = max(x1 + 1, min(image.width, int(x2 + .999)))
                     y2 = max(y1 + 1, min(image.height, int(y2 + .999)))
                     crop = image.crop((x1, y1, x2, y2))
-                    logits = reader(reader_transform(crop).unsqueeze(0).to(device))
+                    logits = reader_country.frame_forward(torch, reader, reader_transform(crop).unsqueeze(0).to(device),
+                                                          country)
                     probabilities = torch.softmax(logits, dim=1)[0]
                     reader_score, class_index = probabilities.max(0)
                     score = float(reader_score.detach().cpu())

@@ -75,6 +75,8 @@ def _commit(path: Path) -> str | None:
 
 def _release(package: Path) -> dict:
     """The networks of the car's release, as its runner reads them (speed_limits.json, format 2)."""
+    from nnslr_tools.reader_country import contract_codes
+
     models = package / 'models'
     try:
         manifest = json.loads((models / MANIFEST).read_text('utf-8'))
@@ -84,12 +86,13 @@ def _release(package: Path) -> dict:
         classifier = models / manifest['classifier']['file']
         contracts = {name: json.loads((models / manifest[name]['contract']).read_text('utf-8'))
                      for name in ('finder', 'classifier')}
+        codes = contract_codes(contracts['classifier'])
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise CarReadingError(f'no release of the car\'s networks in {models}: {exc}') from exc
     return {'version': str(manifest.get('version') or ''), 'finder': finder, 'classifier': classifier,
-            'classes': list(contracts['classifier']['output']['classes']),
+            'classes': list(contracts['classifier']['output']['classes']), 'classifier_countries': codes,
             'checkpoints': {name: contract.get('checkpoint') for name, contract in contracts.items()},
-            'files': [package / 'vision.py', models / MANIFEST, finder, classifier]}
+            'files': [package / 'vision.py', models / MANIFEST, finder, classifier, models / manifest['classifier']['contract']]}
 
 
 def networks(package: Path | None = None) -> dict:
@@ -108,11 +111,13 @@ def networks(package: Path | None = None) -> dict:
         try:
             vision = road_type_signs.load_vision(package)
             finder = road_type_signs._Network(release['finder'])
-            classifier = road_type_signs._Network(release['classifier'])
+            codes = release['classifier_countries']
+            classifier = (road_type_signs._StepNetwork if codes else road_type_signs._Network)(release['classifier'])
         except Exception as exc:  # noqa: BLE001 - whatever the clone's files raise, the car's networks are not here
             raise CarReadingError(f'the car\'s networks do not load: {exc}') from exc
         # A new dict, not the old one filled again: a reading under way keeps the networks it started with.
         _loaded = {'vision': vision, 'finder': finder, 'classifier': classifier, 'classes': release['classes'],
+                   **({'classifier_countries': codes} if codes else {}),
                    'stamp': stamp,
                    'release': {'name': f"speed-limits {release['version']}".strip(),
                                'cutter': release['checkpoints']['finder'],
@@ -156,18 +161,21 @@ def review_box(name: str) -> dict:
 
 
 def read_nv12(loaded: dict, data: bytes, width: int, height: int,
-              full: tuple[bytes, int, int] | None = None) -> tuple[list[dict], int | None]:
+              full: tuple[bytes, int, int] | None = None, *, country: str | None = None) -> tuple[list[dict], int | None]:
     """read_signs on one NV12 frame, each sign with its use and its box of the review, and the index of the one the
     car's logs give as the frame's reading (vision.raw_reading, on the confidences before they are rounded: two signs
     of 0.99999 and 0.999999 are both 1.0 here, and the car takes the second). full: (NV12 bytes, width, height) of the
     same frame at full definition, for the classifier's crops, as the car with Read signs at full resolution."""
+    from nnslr_tools.reader_country import network_for_country
+
     vision = loaded['vision']
     pixels = np.frombuffer(data, dtype=np.uint8)
     y, uv = vision.nv12_planes(pixels, width, height, width, width * height)
     planes = None
     if full is not None:
         planes = vision.nv12_planes(np.frombuffer(full[0], dtype=np.uint8), full[1], full[2], full[1], full[1] * full[2])
-    signs = vision.read_signs(y, uv, vision.SignNetInput(width, height), loaded['finder'], loaded['classifier'],
+    classifier = network_for_country(loaded['classifier'], loaded.get('classifier_countries', ()), country)
+    signs = vision.read_signs(y, uv, vision.SignNetInput(width, height), loaded['finder'], classifier,
                               loaded['classes'], planes)
     surest = vision.raw_reading(signs)
     return ([{'box': [round(float(value), 2) for value in sign['box']], 'score': round(float(sign['score']), 4),
@@ -260,14 +268,19 @@ def read_frame(root: Path, route: str, segment: int, decoded: int, *, width: int
     width x height: the frame's size in the review, which the video must have (the boxes are in its pixels). speed: the
     car's, m/s, for the applicability network.
     Raises video_frames.VideoFrameError (no such frame), CarReadingError (no networks)."""
+    from nnslr_tools.reader_country import video_countries
+
     loaded = networks(package)
+    countries = video_countries(root, route).get(segment, ()) if loaded.get('classifier_countries') else ()
+    second = int(decoded) // 20
+    country = countries[second] if 0 <= second < len(countries) else None
     video = video_frames.video_of(root, route, segment)
     stat = video.stat()
     try:
         decider = str(decider_in_use(root))
     except CarReadingError:
         decider = None
-    key = (str(video), stat.st_mtime_ns, stat.st_size, int(decoded), loaded['stamp'], decider)
+    key = (str(video), stat.st_mtime_ns, stat.st_size, int(decoded), loaded['stamp'], decider, country)
     with _guard:
         found = _readings.get(key)
     if found is None:
@@ -276,7 +289,7 @@ def read_frame(root: Path, route: str, segment: int, decoded: int, *, width: int
         full = None
         if video_frames.video_size(video) == FULL_SIZE:
             full = video_frames.nv12_frame(video, int(decoded), native=True)
-        signs, surest = read_nv12(loaded, data, video_width, video_height, full)
+        signs, surest = read_nv12(loaded, data, video_width, video_height, full, country=country)
         note = rule_signs(root, route, segment, int(decoded), signs, video_width, video_height, speed)
         found = {'signs': signs, 'surest': surest, 'width': video_width, 'height': video_height,
                  'release': loaded['release'], 'applicability_note': note,

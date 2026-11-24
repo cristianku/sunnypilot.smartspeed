@@ -155,8 +155,10 @@ def fingerprint(package: Path, classifier: Path | None = None, models: Path | No
     networks (sha256), the release's settings, the rate."""
     package = Path(package)
     paths = network_paths(package, classifier, models)
+    codes = classifier_countries(paths['classifier']) if 'classifier' in paths else ()
     return {'version': CACHE_VERSION, 'video_step': VIDEO_STEP, 'settings': release_settings(package, models),
-            'vision': _sha256(package / 'vision.py'),
+             'vision': _sha256(package / 'vision.py'),
+             **({'classifier_countries': list(codes)} if codes else {}),
             **({'applicability': _sha256(package / 'applicability.py')} if 'decider' in paths else {}),
             **{name: _sha256(path) for name, path in paths.items()}}
 
@@ -188,6 +190,13 @@ def classifier_classes(path: Path) -> list[str]:
     """The classes of a classifier's ONNX, from its contract."""
     path = Path(path)
     return json.loads(path.with_name(path.name + '.contract.json').read_text('utf-8'))['output']['classes']
+
+
+def classifier_countries(path: Path) -> tuple[str, ...]:
+    from nnslr_tools.reader_country import contract_codes
+
+    contract = path.with_name(path.name + '.contract.json')
+    return contract_codes(json.loads(contract.read_text('utf-8'))) if contract.is_file() else ()
 
 
 def load_vision(package: Path, models: Path | None = None):
@@ -277,8 +286,10 @@ def _worker_start(package: str, gpu: bool = False, classifier: str | None = None
     models = Path(models) if models else None
     paths = network_paths(Path(package), Path(classifier) if classifier else None, models)
     decider = paths.get('decider')
+    codes = classifier_countries(paths['classifier'])
     _WORKER.update(vision=load_vision(Path(package), models), finder=_Network(paths['finder'], gpu),
-                   classifier=_Network(paths['classifier'], gpu), classes=classifier_classes(paths['classifier']),
+                   classifier=(_StepNetwork if codes else _Network)(paths['classifier'], gpu),
+                   classifier_countries=codes, classes=classifier_classes(paths['classifier']),
                    nvdec=gpu, decider=_StepNetwork(decider, gpu) if decider else None,
                    decider_contract=json.loads(decider.with_name(decider.name + '.contract.json').read_text('utf-8'))
                    if decider else None, applicability=load_applicability(Path(package)) if decider else None, rulers={})
@@ -309,17 +320,19 @@ def read_segment(task: tuple) -> dict:
     use the GPU: a video it cannot decode is read again on the CPU."""
     video, segment, pictures, *rest = task
     speeds = rest[0] if rest else None
+    countries = rest[1] if len(rest) > 1 else ()
     width, height = _video_size(Path(video))
     # A video at full definition is read at the size of the others: these signs are big, no crop of the frame is needed.
     reduce = (width, height) == FULL_SIZE
     if reduce:
         width, height = FRAME_SIZE
     if _WORKER.get('nvdec'):
-        result = _read_video(video, width, height, nvdec=True, reduce=reduce, pictures=pictures, speeds=speeds)
+        result = _read_video(video, width, height, nvdec=True, reduce=reduce, pictures=pictures, speeds=speeds,
+                             countries=countries)
         if result['frames']:
             return {'segment': segment, **result}
     return {'segment': segment, **_read_video(video, width, height, nvdec=False, reduce=reduce, pictures=pictures,
-                                              speeds=speeds)}
+                                              speeds=speeds, countries=countries)}
 
 
 def _save_pictures(path: Path, pictures: list[np.ndarray]) -> None:
@@ -330,8 +343,11 @@ def _save_pictures(path: Path, pictures: list[np.ndarray]) -> None:
 
 
 def _read_video(video: str, width: int, height: int, *, nvdec: bool, reduce: bool = False,
-                pictures: str | None = None, speeds: list | None = None) -> dict:
+                 pictures: str | None = None, speeds: list | None = None, countries: tuple = ()) -> dict:
+    from nnslr_tools.reader_country import network_for_country
+
     vision, finder, classifier, classes = (_WORKER[name] for name in ('vision', 'finder', 'classifier', 'classes'))
+    codes = _WORKER.get('classifier_countries', ())
     ruler = _ruler(width, height)
     size = width * height * 3 // 2
     chosen = f'select=not(mod(n\\,{VIDEO_STEP}))' + (',' + REDUCE_FILTER if reduce else '')
@@ -348,7 +364,9 @@ def _read_video(video: str, width: int, height: int, *, nvdec: bool, reduce: boo
                 break
             data = np.frombuffer(buffer, dtype=np.uint8)
             y, uv = vision.nv12_planes(data, width, height, width, width * height)
-            signs = vision.read_signs(y, uv, signnet_input, finder, classifier, classes)
+            second = count * VIDEO_STEP // VIDEO_FPS
+            reader = network_for_country(classifier, codes, countries[second] if second < len(countries) else None)
+            signs = vision.read_signs(y, uv, signnet_input, finder, reader, classes)
             if ruler is not None:
                 # As speedvisiond: right after the classifier, with the car's speed; a sign of another road is not taken.
                 ruler.rule(y, uv, signs, speeds[count] if speeds is not None and count < len(speeds) else None)
@@ -370,7 +388,7 @@ def _read_video(video: str, width: int, height: int, *, nvdec: bool, reduce: boo
     if pictures and count:
         _save_pictures(Path(pictures), saved)
     return {'frames': count, 'signs': found, 'boxes': boxes, 'other_road': other, 'other_boxes': other_boxes,
-            'gpu': finder.gpu and (ruler is None or _WORKER['decider'].gpu), 'nvdec': nvdec,
+            'gpu': finder.gpu and (not codes or classifier.gpu) and (ruler is None or _WORKER['decider'].gpu), 'nvdec': nvdec,
             'pictures': count if pictures and count else None}
 
 
@@ -495,7 +513,7 @@ def load_signs(root: Path, route: str, models: Path | None = None) -> dict | Non
 
 def _save_signs(root: Path, route: str, segments: list[dict], stamp, videos: list, classifier: Path | None,
                 package: Path, models: Path | None = None, networks: dict | None = None,
-                speeds: list | None = None) -> dict:
+                speeds: list | None = None, country_sha256: str | None = None) -> dict:
     """The record of a drive read to the end, written to its cache. 'pictures' only when every segment saved them."""
     vision = load_vision(package, models)
     segments.sort(key=lambda item: item['segment'])
@@ -511,7 +529,9 @@ def _save_signs(root: Path, route: str, segments: list[dict], stamp, videos: lis
                              for item in segments for seconds, signs in item.get('other_road') or []],
               'other_boxes': [boxes for item in segments for boxes in item.get('other_boxes') or []],
               'networks': networks, 'speeds': speeds or [],
-              'classifier': str(classifier) if classifier is not None else None}
+               'classifier': str(classifier) if classifier is not None else None}
+    if country_sha256 is not None:
+        record['country_sha256'] = country_sha256
     if all(item.get('pictures') == item['frames'] for item in segments if item['frames']):
         record['pictures'] = {str(item['segment']): item['pictures'] for item in segments if item['frames']}
     path = cache_path(root, route, models)
@@ -533,20 +553,27 @@ def build_signs(root: Path, routes: list[str], *, package: Path | None = None, w
     them again whenever it is read. models: the release to read with (models_path; the brain's: sign_networks).
     speeds_of: route -> its joined logs (or None), for the car's speed the applicability network gets (frame_speeds);
     without it, or a drive without logs, the speed is unknown as on the car before its first carState."""
+    from nnslr_tools.reader_country import video_countries
+
     package = package_path() if package is None else Path(package)
     models = Path(models) if models is not None else None
     onnx = classifier_onnx(root, classifier) if classifier is not None else None
     stamp = fingerprint(package, onnx, models)
     paths = network_paths(package, onnx, models)
     ids = network_ids(paths)
+    codes = classifier_countries(paths['classifier']) if 'classifier' in paths else ()
     ruled = 'decider' in paths
-    records, tasks, stamps, known = {}, [], {}, {}
+    records, tasks, stamps, known, country_digests = {}, [], {}, {}, {}
     for route in routes:
         videos = _videos(root, route)
         stamps[route] = _video_stamp(videos)
+        countries = video_countries(root, route) if codes else {}
+        country_digest = (hashlib.sha256(json.dumps(countries, sort_keys=True).encode()).hexdigest() if codes else None)
+        country_digests[route] = country_digest
         record = load_signs(root, route, models)
         speeds = None
         if record and record.get('fingerprint') == stamp and record.get('videos') == stamps[route] and \
+                record.get('country_sha256') == country_digest and \
                 (not pictures or pictures_ready(root, record)):
             # The segments ruled with the car's speed ('speeds'): one whose logs came since is read again with it.
             had = set(record['speeds']) if isinstance(record.get('speeds'), list) else set()
@@ -562,7 +589,7 @@ def build_signs(root: Path, routes: list[str], *, package: Path | None = None, w
             speeds = frame_speeds(speeds_of(route)) if ruled and speeds_of is not None and videos else {}
         known[route] = sorted(segment for segment in speeds if segment in videos)
         tasks += [(route, segment, str(path), str(picture_path(root, route, segment)) if keep else None,
-                   speeds.get(segment)) for segment, path in videos.items()]
+                   speeds.get(segment), countries.get(segment, ())) for segment, path in videos.items()]
     if tasks:
         workers = workers or max(1, min(len(tasks), (os.cpu_count() or 4) // 2))
         which = f'the classifier {classifier}' if classifier is not None else f"the classifier {ids.get('classifier')}"
@@ -585,7 +612,8 @@ def build_signs(root: Path, routes: list[str], *, package: Path | None = None, w
                                            context.Value('i', 0) if cards else None,
                                            str(models) if models is not None else None)) as pool:
             done = 0
-            for (route, *_), result in zip(tasks, pool.map(read_segment, [(v, s, p, f) for _, s, v, p, f in tasks])):
+            work = [(v, s, p, f, c) if codes else (v, s, p, f) for _, s, v, p, f, c in tasks]
+            for (route, *_), result in zip(tasks, pool.map(read_segment, work)):
                 if cards and not result['gpu']:
                     # A process whose card does not work stops the reading: on the cards given, never the CPU.
                     raise RuntimeError(f"road-type signs: segment {result['segment']} of {route} was read by the "
@@ -599,7 +627,7 @@ def build_signs(root: Path, routes: list[str], *, package: Path | None = None, w
                 # A drive is kept as soon as it is read: a failure further on does not cost it again.
                 if not left[route]:
                     records[route] = _save_signs(root, route, results.pop(route), stamp, stamps[route], classifier,
-                                                 package, models, ids, known[route])
+                                                 package, models, ids, known[route], country_digests[route])
                 if done == 1:
                     log('road-type signs: the networks on the ' + ('GPU' if result['gpu'] else 'CPU') + ', the video decoded'
                         ' on the ' + ('GPU (NVDEC)' if result['nvdec'] else 'CPU'))

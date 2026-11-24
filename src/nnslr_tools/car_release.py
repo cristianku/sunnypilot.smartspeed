@@ -202,6 +202,16 @@ def _car_brain_knows(word: str, clone: Path | None = None) -> bool:
     return shown.returncode == 0 and word in shown.stdout
 
 
+def car_reads_classifier_country(clone: Path | None = None) -> bool:
+    """Do not publish a two-input classifier to an image-only daemon."""
+    clone = Path(clone or os.environ.get(SUNNYPILOT_CLONE_ENV) or SUNNYPILOT_CLONE)
+    try:
+        source = _git(clone, 'show', f'origin/{CAR_BRANCH}:{CAR_DAEMON}')
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+    return 'classifier_countries' in source
+
+
 def car_gives_every_box(clone: Path | None = None) -> bool:
     """Whether the comma gives a brain the boxes of every sign read, those of another road too, when its contract asks
     (step.other_road_boxes)."""
@@ -481,11 +491,13 @@ def _git(folder: Path, *args: str) -> str:
     return done.stdout.strip()
 
 
-def manifest_of(version: str, settings: dict | None = None, brain: bool = False, decider: bool = False) -> dict:
+def manifest_of(version: str, settings: dict | None = None, brain: bool = False, decider: bool = False,
+                classifier_country: bool = False) -> dict:
     """speed_limits.json; settings: the car's (car_settings.values), each a constant of vision.py on the comma, and with a
-    brain the policy of its country."""
+    brain the policy of its country. A classifier-only release enables GPS for the classifier, not for vision memory."""
     files = {**FILES, **({'decider': DECIDER_FILE} if decider else {}), **({'brain': BRAIN_FILE} if brain else {})}
-    settings = {**(settings or {}), **({'country_policy': COUNTRY_POLICY} if brain else {})}
+    settings = {**(settings or {}), **({'country_policy': COUNTRY_POLICY} if brain else {}),
+                **({'classifier_country_policy': COUNTRY_POLICY} if classifier_country and not brain else {})}
     return {'format': 2, 'version': version,
             **{network: {'file': name, 'contract': name + '.contract.json'} for network, name in files.items()},
             **({'settings': settings} if settings else {})}
@@ -543,6 +555,12 @@ def publish(models: Path, chosen: dict, folder: Path, exported: dict, *, today: 
     """The export in the clone of the models repository and pushed (step 2): {'changed', 'commit', 'version'}. A
     change of the settings alone is a new version too."""
     models = Path(models)
+    from nnslr_tools.reader_country import contract_codes
+
+    contract = json.loads((folder / (FILES['classifier'] + '.contract.json')).read_text(encoding='utf-8'))
+    classifier_country = bool(contract_codes(contract))
+    if classifier_country and not car_reads_classifier_country():
+        raise ValueError("the pushed Sunnypilot speed-limits branch does not support classifier country input yet")
     if not (models / '.git').exists():
         raise ValueError(f'{models} is not a git clone')
     start = _sync(models, dry_run=dry_run)
@@ -551,7 +569,7 @@ def publish(models: Path, chosen: dict, folder: Path, exported: dict, *, today: 
     files = car_files(chosen)
     brain, decider = 'brain' in files, 'decider' in files
     same_manifest = manifest is not None and {key: value for key, value in manifest.items() if key != 'version'} == {
-        key: value for key, value in manifest_of('', settings, brain, decider).items() if key != 'version'}
+        key: value for key, value in manifest_of('', settings, brain, decider, classifier_country).items() if key != 'version'}
     same = same_manifest and all(
         (models / name).is_file() and not (models / name).is_symlink()
         and _sha256(models / name) == exported[network]['onnx_sha256'] for network, name in files.items())
@@ -572,7 +590,7 @@ def publish(models: Path, chosen: dict, folder: Path, exported: dict, *, today: 
                 raise ValueError(f'{target} is a link: the clone must hold the files themselves')
             shutil.copyfile(folder / file, target)
             paths.append(file)
-    (models / MANIFEST).write_text(json.dumps(manifest_of(version, settings, brain, decider), indent=2) + '\n',
+    (models / MANIFEST).write_text(json.dumps(manifest_of(version, settings, brain, decider, classifier_country), indent=2) + '\n',
                                    encoding='utf-8')
     paths.append(MANIFEST)
     message = (f'speed limits {version}: SignNet {chosen["finder"]["run"]}, classifier {chosen["classifier"]["run"]}'
