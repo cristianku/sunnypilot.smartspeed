@@ -15,14 +15,13 @@ const emit = defineEmits<{changed: []}>();
 
 const rows = computed(() => props.drives ?? []);
 const busy = computed(() => rows.value.some((drive) => drive.scan.state === 'queued' || drive.scan.state === 'scanning'));
-/** Drives whose logs wait to be read, by the server's one rule (DriveReviewStore.needs_scan, the same as Sign distance):
- * not read, out of date, a reading that stopped, logs not imported yet or readable again; never one before the first
- * day read. */
-const toRead = computed(() => rows.value.filter((drive) => !drive.before_review && drive.needs_scan).length);
+/** The cutoff excludes first reads of older drives, not refreshes of a drive already read. */
+const bulkRead = (drive: DriveRow): boolean => drive.bulk_scan ?? (!drive.before_review && drive.needs_scan);
+const toRead = computed(() => rows.value.filter(bulkRead).length);
 const read = computed(() => rows.value.filter((drive) => drive.scan.state === 'done' || drive.scan.state === 'no_episodes').length);
 const withoutLogs = computed(() => rows.value.filter((drive) => drive.scan.state === 'no_logs' && !drive.logs_found).length);
 /** Left out by the first day read (DriveReviewStore.review_from): their player still reads them one by one. */
-const early = computed(() => rows.value.filter((drive) => drive.before_review && drive.needs_scan).length);
+const early = computed(() => rows.value.filter((drive) => drive.before_review && drive.needs_scan && !bulkRead(drive)).length);
 
 const starting = ref(false);
 async function readAll(): Promise<void> {

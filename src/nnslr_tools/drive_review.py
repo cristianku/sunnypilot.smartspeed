@@ -80,8 +80,8 @@ SCHEMA_STATEMENTS = (
 )
 
 
-# Drives before this day are left out by Read the logs: the vision network on the car was not yet the one worth
-# judging (Cristian, 31 Oct 2026). Each is still read from its player; a stored '' takes every drive.
+# First-time reads before this day are left out by Read the logs (Cristian, 31 Oct 2026).
+# Previously read drives still get refreshed; a stored '' takes every drive.
 DEFAULT_REVIEW_FROM = '2026-10-30'
 
 
@@ -482,6 +482,7 @@ class DriveReviewStore:
                 'kinds': sorted({row['kind'] for row in files}), 'progress': scan['progress'] if scan else 0,
                 'error': scan['error'] if scan else None, 'finished_at': scan['finished_at'] if scan else None,
                 'scanner_version': scan['scanner_version'] if scan else None,
+                'previously_read': (summary or {}).get('t0_ns') is not None,
                 'coverage': (summary or {}).get('coverage'), 'counts': (summary or {}).get('counts'),
                 'dashcam': (summary or {}).get('dashcam'), 'unreadable': (summary or {}).get('unreadable', []),
                 'unreadable_files': errors}
@@ -529,6 +530,11 @@ class DriveReviewStore:
         if name in ('no_logs', 'unreadable_logs'):
             return any(item['path'] not in errors for item in drive_logs.discover(self.root, route))
         return False
+
+    def bulk_needs_scan(self, route: str, early: bool, state: dict | None = None, *, needs: bool | None = None) -> bool:
+        """Apply the cutoff only to a first read, not to refreshes of drives already used elsewhere."""
+        state = state or self.scan_state(route)
+        return (not early or state['previously_read']) and (self.needs_scan(route, state) if needs is None else needs)
 
     def summary(self, route: str) -> dict | None:
         rows = self._rows('SELECT summary, files FROM scans WHERE route = ?', (route,))
@@ -816,7 +822,7 @@ def before_review(day: str | None, review_from: str) -> bool:
 
 
 def early_routes(store: 'DriveReviewStore') -> set[str]:
-    """The drives before the first day reviewed (Read the logs skips them)."""
+    """The drives before the first day reviewed (first-time bulk reads skip them)."""
     from nnslr_tools.drives import drive_of
     review_from = store.review_from()
     if not review_from:
@@ -873,12 +879,14 @@ def _drives_view(store: DriveReviewStore) -> list[dict]:
         if not drive.get('title') and summary.get('gps'):
             drive['title'] = _title(store.root, summary['gps'])
         state = store.scan_state(route)
+        early = before_review(day, review_from)
+        needs = store.needs_scan(route, state)
         found = (len(drive_logs.discover(store.root, route)) if state['state'] in ('no_logs', 'unreadable_logs')
                  else None)
         out.append({'route': route, 'title': drive.get('title'), 'when': when, 'when_certain': certain, 'day': day,
-                    'before_review': before_review(day, review_from),
+                     'before_review': early,
                     'minutes': drive.get('minutes'), 'scan': state, 'logs_found': found,
-                    'needs_scan': store.needs_scan(route, state),
+                     'needs_scan': needs, 'bulk_scan': store.bulk_needs_scan(route, early, state, needs=needs),
                     'video_segments': len(drive_video.minutes(store.root, route)),
                     'episodes': sum(1 for item in episodes
                                     if item['route'] == route and item['channel'] != 'spot_check')})

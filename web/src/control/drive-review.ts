@@ -45,14 +45,16 @@ export interface DriveRow {
   when_certain: boolean;
   /** The local day it started (YYYY-MM-DD), null when unknown. */
   day: string | null;
-  /** Before the first day read (DriveReviewStore.review_from): Read the logs skips it. */
+  /** Before the first day for a new bulk read (DriveReviewStore.review_from). */
   before_review: boolean;
   minutes: number | null;
   scan: ScanState;
   /** Logs found on the server and not imported yet (only for a drive without logs). */
   logs_found: number | null;
-  /** Read the logs reads this drive now (DriveReviewStore.needs_scan, the one rule of every caller). */
+  /** These logs need reading, regardless of the bulk-read cutoff. */
   needs_scan: boolean;
+  /** Read the logs will read it now: a first read may be excluded by the cutoff, a refresh is not. */
+  bulk_scan?: boolean;
   video_segments: number;
   episodes: number;
 }

@@ -658,30 +658,45 @@ def test_the_drive_review_only_shows_and_sends_to_sign_review(tmp_path, monkeypa
     assert '/speed-review?drive=' in (CONTROL_JS.parent / 'review.js').read_text(encoding='utf-8')
 
 
-def test_drives_before_the_first_day_reviewed_are_left_out_by_read_the_logs(tmp_path):
+def test_read_the_logs_refreshes_scanned_old_drives_without_reading_new_ones_before_the_cutoff(tmp_path):
     make_report(tmp_path)
     # ROUTE's GPS says 21 Sep 2026, before the default first day; OTHER_ROUTE has no fix: its videos' day (today).
     comma_drive(tmp_path, segments=(0,), gps_unix_ms=1_790_000_000_000)
     comma_drive(tmp_path, OTHER_ROUTE, segments=(0,))
+    never = '00000003--abcdef1234'
+    comma_drive(tmp_path, never, segments=(0,))
+    video = tmp_path / 'raw' / 'routes' / never / '0' / 'fcamera.hevc'
+    os.utime(video, (1_790_000_000, 1_790_000_000))
     store = drive_review.store_for(tmp_path)
     store.scan(ROUTE)
     store.scan(OTHER_ROUTE)
     assert store.review_from() == drive_review.DEFAULT_REVIEW_FROM == '2026-10-30'
-    assert drive_review.early_routes(store) == {ROUTE}
+    assert drive_review.early_routes(store) == {ROUTE, never}
     view = {item['route']: item for item in drive_review.drives_view(store)}
     assert view[ROUTE]['day'] == '2026-09-21' and view[ROUTE]['before_review'] is True
     assert view[OTHER_ROUTE]['before_review'] is False
     server = RunningServer(tmp_path)
     try:
-        # Out of date with a new scanner: Read the logs (Speed review) reads only the drives from the first day.
-        store._run([("UPDATE scans SET scanner_version = 0", ())])
+        # Same raw log: a cached extract from before standstill was saved needs refreshing, even on the older drive.
+        import gzip
+        from nnslr_tools.drive_extract import STANDSTILL_KEY
+
+        digest = store.summary(ROUTE)['files']['0']['sha256']
+        extract = drive_logs.extract_path(tmp_path, ROUTE, 0, digest)
+        old = json.loads(gzip.decompress(extract.read_bytes()))
+        old['meta'].pop(STANDSTILL_KEY)
+        extract.write_bytes(gzip.compress(json.dumps(old).encode()))
+        view = {item['route']: item for item in drive_review.drives_view(store)}
+        assert view[ROUTE]['scan']['state'] == 'outdated' and view[ROUTE]['bulk_scan']
+        assert view[never]['needs_scan'] and not view[never]['bulk_scan']
         status, _, data = server.request('POST', '/api/drive-review/scan-all', body={})
-        assert status == 200 and json_of(data)['queued'] == [OTHER_ROUTE]
-        settled(store, OTHER_ROUTE)
-        # The early drive is still read from its own player; the first day is no longer changed from the site.
-        status, _, data = server.request('POST', f'/api/drive-review/drives/{ROUTE}/scan', body={})
-        assert status == 200
+        assert status == 200 and json_of(data)['queued'] == [ROUTE]
         assert settled(store, ROUTE)['state'] == 'done'
+        assert drive_logs.standstill_read(store.merged(ROUTE))
+        # A never-read early drive can still be read from its own player.
+        status, _, data = server.request('POST', f'/api/drive-review/drives/{never}/scan', body={})
+        assert status == 200
+        assert settled(store, never)['state'] == 'done'
         assert server.request('POST', '/api/drive-review/settings', body={'review_from': ''})[0] == 404
     finally:
         server.close()

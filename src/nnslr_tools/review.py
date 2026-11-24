@@ -1613,11 +1613,7 @@ def make_handler(app: ReviewApp):
                     queued = []
                     early = drive_review.early_routes(store)
                     for route in drive_review.all_routes(app.root):
-                        if route in early:
-                            continue
-                        # The one rule of every caller (DriveReviewStore.needs_scan): an unreadable log is not
-                        # read again until it can be opened.
-                        if store.needs_scan(route):
+                        if store.bulk_needs_scan(route, route in early):
                             store.queue_scan(route)
                             queued.append(route)
                     self._json(200, {'ok': True, 'queued': queued})
