@@ -104,7 +104,7 @@ with sync_playwright() as p:
     browser = p.chromium.launch(executable_path=chromium, headless=True)
     page = browser.new_page(viewport={'width': int(width), 'height': 900})
     page.add_init_script("localStorage.setItem('nnslr-reviewer', 'Catalog test')")
-    writes, fits, saves = [], [], []
+    writes, fits, local_fits, saves = [], [], [], []
     confirm = conflict = False
     def access(route):
         if route.request.method == 'GET':
@@ -112,6 +112,9 @@ with sync_playwright() as p:
         elif route.request.url.endswith('/ai-fit'):
             fits.append((route.request.url, route.request.post_data_json))
             route.fulfill(json={'ok': True, 'box': [17, 4, 30, 14], 'message': 'Synthetic proposal'})
+        elif route.request.url.endswith('/fit'):
+            local_fits.append((route.request.url, route.request.post_data_json))
+            route.fulfill(json={'ok': True, 'boxes': [[16, 3, 29, 16]], 'ms': 5})
         elif conflict and route.request.url.endswith('/frame/2/1521'):
             route.fulfill(status=409, json={'error':'revision_conflict','message':'Another reviewer saved this frame.'})
         elif confirm and route.request.url.endswith('/frame/2/1521'):
@@ -134,6 +137,16 @@ with sync_playwright() as p:
     bend_form = page.get_by_role('dialog', name='Quick edit')
     bend_form.get_by_label('Painted on the road').check()
     expect(bend_form.get_by_label('Sign', exact=True)).to_have_value('kind:dangerous_bend_left')
+    bend_form.locator('.sct-zoom').focus()
+    page.keyboard.press('m' if int(width) == 820 else 'Shift+M')
+    expect(bend_form.get_by_label('Sign', exact=True)).to_have_value('kind:motorway_direction')
+    expect(bend_form.get_by_label('Painted on the road')).to_be_checked()
+    expect(bend_form.get_by_label('Distance (m)')).to_have_value('70')
+    page.keyboard.press('c')
+    expect(bend_form.get_by_text('The box includes a plate.', exact=False)).to_be_visible()
+    assert not local_fits
+    expect(bend_form.get_by_role('button', name='Save and next')).to_be_enabled()
+    assert not writes and not saves
     bend_form.get_by_role('button', name='Close').click()
     bend_form.get_by_role('button', name='Discard and close').click()
     page.get_by_role('button', name='All signs').click()
@@ -163,15 +176,31 @@ with sync_playwright() as p:
     expect(dialog.locator('a')).to_have_attribute('href', __import__('re').compile('frame=0%2F0'))
     rect = dialog.locator('.sct-box')
     expect(rect).to_have_attribute('width', '14')
+    zoom = dialog.locator('.sct-zoom')
+    expect(zoom).to_be_focused()
     assert not writes and not saves
     # q in a field is not a box shortcut; outside the fields Shift+arrows keep the centre and ratio.
     dialog.get_by_label('Speed (km/h)').focus()
     page.keyboard.press('q')
     expect(rect).to_have_attribute('width', '14')
-    zoom = dialog.locator('.sct-zoom')
     zoom.focus()
     def coords():
         return rect.evaluate("(r)=>['x','y','width','height'].map(k=>Number(r.getAttribute(k)))")
+    # Side: change width only. Corner: independent changes on both axes, opposite corner fixed.
+    def drag_handle(name, dx, dy):
+        grip = zoom.locator('rect[data-grip="' + name + '"]').bounding_box()
+        gx,gy = round(grip['x']+grip['width']/2), round(grip['y']+grip['height']/2)
+        page.mouse.move(gx,gy)
+        page.mouse.down()
+        page.mouse.move(gx+dx,gy+dy)
+        page.mouse.up()
+    x,y,w,h = coords()
+    drag_handle('e', 10, -4)
+    xx,yy,ww,hh = coords()
+    assert xx==x and yy==y and hh==h and ww>w
+    drag_handle('se', -8, 6)
+    xx2,yy2,ww2,hh2 = coords()
+    assert xx2==xx and yy2==yy and ww2<ww and hh2>hh
     x,y,w,h = coords()
     page.keyboard.down('Shift')
     page.keyboard.down('ArrowDown')
@@ -215,7 +244,7 @@ with sync_playwright() as p:
     expect(dialog.get_by_text('Synthetic proposal')).to_be_visible()
     assert len(fits) == 1 and fits[0][0].endswith('/frame/2/1521/ai-fit')
     assert fits[0][1]['box'] == [19, 5, 28, 14]
-    boxes = dialog.locator('svg rect')
+    boxes = dialog.locator('.sct-box')
     expect(boxes).to_have_attribute('width', '13')
     expect(boxes).to_have_attribute('height', '13')
     assert '/sign-catalog?' in page.url
@@ -224,6 +253,11 @@ with sync_playwright() as p:
         page.screenshot(path=f'/tmp/opencode/catalog-quick-{width}.png')
     if int(embedded):
         confirm = True
+        dialog.locator('.sct-zoom').focus()
+        page.keyboard.press('c')
+        expect(dialog.get_by_text('Box fitted · 5 ms')).to_be_visible()
+        assert len(local_fits) == 1 and local_fits[0][0].endswith('/frame/2/1521/fit')
+        assert local_fits[0][1]['boxes'] == [[17, 2.5, 30, 15.5]] and not saves
         dialog.get_by_label('Speed (km/h)').fill('80')
         page.keyboard.press('?')
         expect(dialog.get_by_label('Speed (km/h)')).to_have_value('')
@@ -233,12 +267,16 @@ with sync_playwright() as p:
         assert saved.value.status == 200
         first_box, fitted = saves[0]['detections']
         assert first_box['bbox_xyxy'] == [1, 2, 15, 20] and first_box['value_kph'] == 50
-        assert fitted['box_source'] == 'ai_fit' and fitted['bbox_xyxy'] == [17, 2.5, 30, 15.5]
+        assert fitted['box_source'] == 'fit' and fitted['bbox_xyxy'] == [16, 3, 29, 16]
         assert fitted['value_kph'] is None and fitted['sign_value'] is None and fitted['value_state'] == 'unknown'
         assert fitted['family'] == 'maximum_speed' and fitted['applicability'] == 'own_road'
         expect(dialog.locator('a')).to_have_attribute('href', __import__('re').compile('frame=0%2F0'))
         expect(dialog.get_by_label('Speed (km/h)')).to_have_value('60')
+        expect(zoom).to_be_focused()
+        page.keyboard.press('Shift+ArrowDown')
+        assert coords()[2] < 14
         dialog.get_by_role('button',name='Close').click()
+        dialog.get_by_role('button',name='Discard and close').click()
     else:
         conflict = True
         dialog.get_by_role('button',name='Save and next').click()

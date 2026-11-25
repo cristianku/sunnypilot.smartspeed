@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import {computed, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef, watch} from 'vue';
+import {computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef, watch} from 'vue';
 import {api, ApiError, messageOf, post} from '../common/api';
 import type {AuthState} from '../common/auth-types';
 import {readLocal} from '../review/dom';
 import {describe, dropStaleKind, FAMILIES, familyHasValue, holdsPlate, isPainted, PANELS, PLATE_DISTANCE_MAX_M,
   ROADS, SIGN_KIND_GROUPS, takesDistance, togglePaintedBox} from '../review/catalog';
-import {zoomView} from '../review/overlay';
+import {sceneScale, zoomView} from '../review/overlay';
 import {sameBox, scaleBox} from '../review/geometry';
 import type {Box, Detection, SaveAnswer} from '../review/types';
 import {detail, forgetLegacyDetail, squareBox, updateLegacyReview, type SignRef} from './catalog-edit';
@@ -22,27 +22,53 @@ const reviewer = ref(''), local = ref(false), discard = ref(false);
 const modified = computed(() => remove.value || (saved.value && JSON.stringify(draft.value) !== JSON.stringify(saved.value.box)));
 const hasSpeed = computed(() => draft.value && familyHasValue(draft.value.family));
 const label = computed(() => draft.value?.family === 'other_sign' && draft.value.sign_type ? 'kind:' + draft.value.sign_type : draft.value?.family);
+const viewAnchor = ref<Box | null>(null);
 const scene = computed(() => {
   const d = saved.value;
   if (!d) return null;
-  const v = zoomView(d.box.bbox_xyxy, d.picture.width, d.picture.height);
-  return {href: '/route/' + props.target[0] + '/' + d.picture.preview_path, viewBox: `${v.x} ${v.y} ${v.width} ${v.height}`};
+  const v = zoomView(viewAnchor.value ?? d.box.bbox_xyxy, d.picture.width, d.picture.height);
+  return {href: '/route/' + props.target[0] + '/' + d.picture.preview_path, v, viewBox: `${v.x} ${v.y} ${v.width} ${v.height}`};
 });
 const bounds = computed(() => draft.value?.bbox_xyxy);
-type Drag = {pointer: number; origin: [number, number]; box: Box; moving: boolean};
+const grips = ['n','s','w','e','nw','ne','sw','se'] as const;
+type Grip = typeof grips[number];
+type Drag = {pointer: number; origin: [number, number]; box: Box; mode: Grip | 'move' | 'draw'};
 const drag = shallowRef<Drag | null>(null);
+const viewport = shallowRef({width: 0, height: 0});
+watch(svg, (element, _, cleanup) => {
+  if (!element) return;
+  const measure = () => { viewport.value = element.getBoundingClientRect(); };
+  measure();
+  const observer = new ResizeObserver(measure);
+  observer.observe(element); cleanup(() => observer.disconnect());
+}, {flush:'post'});
+const handles = computed(() => {
+  const box = bounds.value, v = scene.value?.v;
+  if (!box || !v) return [];
+  const [left,top,right,bottom] = box, w = right-left, h = bottom-top;
+  const k = sceneScale(viewport.value, v.width, v.height);
+  const size = Math.min(7/k, w/4, h/4), hitX = Math.min(22/k, w/2), hitY = Math.min(22/k, h/2);
+  return grips.map(grip => {
+    const horizontal = grip.includes('w') || grip.includes('e'), vertical = grip.includes('n') || grip.includes('s');
+    const x = grip.includes('w') ? left : grip.includes('e') ? right : (left+right)/2;
+    const y = grip.includes('n') ? top : grip.includes('s') ? bottom : (top+bottom)/2;
+    return {grip, x, y, size, width: horizontal ? hitX : w, height: vertical ? hitY : h};
+  });
+});
 const advancing = ref(false);
 let ticket = 0;
 onBeforeUnmount(() => { ++ticket; forgetLegacyDetail(); });
 async function load(autoFit = false): Promise<void> {
   const n = ++ticket;
   saved.value = null; draft.value = null; stale.value = false; remove.value = false; discard.value = false;
-  drag.value = null; advancing.value = false;
+  drag.value = null; viewAnchor.value = null; advancing.value = false;
   note.value = ''; error.value = ''; busy.value = true;
   try {
     const data = await detail(props.target);
     if (ticket !== n) return;
     saved.value = data; draft.value = structuredClone(data.box);
+    await nextTick();
+    if (ticket === n && dialog.value?.open) svg.value?.focus({preventScroll: true});
   } catch (e) { if (ticket === n) error.value = messageOf(e); }
   finally { if (ticket === n) busy.value = false; }
   if (autoFit && ticket === n && draft.value) await fit();
@@ -60,9 +86,10 @@ function close(): void {
   if (modified.value && !discard.value) { discard.value = true; return; }
   emit('close');
 }
-function changeLabel(e: Event): void {
+const motorwayDirection = 'kind:motorway_direction';
+function changeLabel(value: string): void {
+  if (value === label.value) return;
   const d = draft.value!;
-  const value = (e.target as HTMLSelectElement).value;
   if (d.family === 'road_marking_candidate' && (value.startsWith('kind:') || value === 'other_sign')) d.painted = true;
   d.family = value.startsWith('kind:') ? 'other_sign' : value;
   d.sign_type = value.startsWith('kind:') ? value.slice(5) : null;
@@ -82,9 +109,9 @@ function metres(e: Event): void {
   if (v !== null) d.supplementary_panel = 'distance';
   d.plate_distance_m = v; dropStaleKind(d);
 }
-function setBox(b: Box, ai = false): void {
+function setBox(b: Box, source: 'hand' | 'fit' | 'ai_fit' = 'hand'): void {
   const d = draft.value!;
-  d.bbox_xyxy = b; d.box_source = ai ? 'ai_fit' : 'hand'; delete d.check_position;
+  d.bbox_xyxy = b; d.box_source = source; delete d.check_position;
 }
 function square(): void {
   if (!saved.value || !bounds.value || !draft.value || holdsPlate(draft.value)) return;
@@ -112,6 +139,10 @@ function shortcut(e: KeyboardEvent): void {
   const field = e.target instanceof Element && e.target.closest('input,select,textarea,[contenteditable="true"]');
   if (e.key === '?' && hasSpeed.value && (!field || field.id === 'quick-speed')) setSpeed(null);
   else if (field) return;
+  else if (e.key.toLowerCase() === 'm') changeLabel(motorwayDirection);
+  else if (e.key.toLowerCase() === 'c') {
+    if (!e.repeat) void fit(e.shiftKey ? 'ai' : 'local');
+  }
   else if (!e.shiftKey && e.key.toLowerCase() === 'q') square();
   else if (e.shiftKey && e.key === 'ArrowUp') resize(1);
   else if (e.shiftKey && e.key === 'ArrowDown') resize(-1);
@@ -119,19 +150,32 @@ function shortcut(e: KeyboardEvent): void {
   e.preventDefault();
   e.stopPropagation();
 }
-async function fit(): Promise<void> {
+async function fit(mode: 'local' | 'ai' = 'ai'): Promise<void> {
   const data = saved.value, box = draft.value;
-  if (!data || !box || busy.value) return;
-  const n = ticket; busy.value = true; note.value = 'Fitting…'; error.value = '';
+  if (!data || !box || busy.value || stale.value || advancing.value || remove.value) return;
   const [route, run, frame] = props.target, plate = holdsPlate(box);
+  if (mode === 'local' && plate) {
+    note.value = 'The box includes a plate. Use Fit with AI to fit both together.'; return;
+  }
+  const n = ticket; busy.value = true; note.value = 'Fitting…'; error.value = '';
   try {
+    if (mode === 'local') {
+      const r = await post<{boxes: (Box | null)[]; ms: number}>(`/api/route/${route}/frame/${frame}/fit`,
+        {run_id: run, boxes: [box.bbox_xyxy]});
+      if (n !== ticket) return;
+      const fitted = r.boxes[0];
+      if (!fitted || fitted.every((v, i) => Math.abs(v - box.bbox_xyxy[i]!) < 1)) {
+        note.value = 'No better box found.'; return;
+      }
+      setBox(fitted, 'fit'); note.value = `Box fitted · ${r.ms} ms`; return;
+    }
     const r = await post<{box: Box | null; includes_plate?: boolean; message: string}>(`/api/route/${route}/frame/${frame}/ai-fit`,
       {run_id: run, box: box.bbox_xyxy, include_plate: plate});
     if (n !== ticket) return;
     note.value = r.message;
     if (!r.box) return;
     if (plate && !r.includes_plate) throw new Error('The server must be updated to fit the sign and its plate together.');
-    setBox(props.squareFit && !plate ? squareBox(r.box, data.picture.width, data.picture.height) : r.box, true);
+    setBox(props.squareFit && !plate ? squareBox(r.box, data.picture.width, data.picture.height) : r.box, 'ai_fit');
   } catch (e) { if (n === ticket) { error.value = messageOf(e); note.value = ''; } }
   finally { if (n === ticket) busy.value = false; }
 }
@@ -147,7 +191,8 @@ function down(e: PointerEvent): void {
   const origin = point(e);
   if (!origin) return;
   svg.value?.focus({preventScroll: true});
-  drag.value = {pointer: e.pointerId, origin, box: [...bounds.value], moving: (e.target as Element).classList.contains('sct-box')};
+  const target = e.target as Element, grip = grips.find(g => g === target.getAttribute('data-grip'));
+  drag.value = {pointer: e.pointerId, origin, box: [...bounds.value], mode: grip ?? (target.classList.contains('sct-box') ? 'move' : 'draw')};
   svg.value?.setPointerCapture(e.pointerId);
 }
 function draw(e: PointerEvent): void {
@@ -157,14 +202,23 @@ function draw(e: PointerEvent): void {
   if (!end) return;
   const [x, y] = gesture.origin;
   let box: Box;
-  if (gesture.moving) {
+  if (gesture.mode === 'move') {
     const [left, top, right, bottom] = gesture.box;
     const dx = Math.max(-left, Math.min(saved.value.picture.width - right, end[0] - x));
     const dy = Math.max(-top, Math.min(saved.value.picture.height - bottom, end[1] - y));
     box = [left + dx, top + dy, right + dx, bottom + dy];
-  } else {
+  } else if (gesture.mode === 'draw') {
     if (Math.abs(end[0] - x) < 1 || Math.abs(end[1] - y) < 1) return;
     box = [Math.min(x,end[0]), Math.min(y,end[1]), Math.max(x,end[0]), Math.max(y,end[1])];
+  } else {
+    const [left, top, right, bottom] = gesture.box, dx = end[0]-x, dy = end[1]-y;
+    const minW = Math.min(1, right-left), minH = Math.min(1, bottom-top);
+    box = [
+      gesture.mode.includes('w') ? Math.max(0, Math.min(right-minW, left+dx)) : left,
+      gesture.mode.includes('n') ? Math.max(0, Math.min(bottom-minH, top+dy)) : top,
+      gesture.mode.includes('e') ? Math.min(saved.value.picture.width, Math.max(left+minW, right+dx)) : right,
+      gesture.mode.includes('s') ? Math.min(saved.value.picture.height, Math.max(top+minH, bottom+dy)) : bottom,
+    ];
   }
   if (box.some((value, i) => value !== bounds.value![i])) setBox(box);
 }
@@ -172,6 +226,8 @@ function finish(e: PointerEvent): void {
   if (drag.value?.pointer !== e.pointerId) return;
   if (e.type === 'pointerup') draw(e);
   drag.value = null;
+  const b = bounds.value, v = scene.value?.v;
+  if (b && v && (b[0]<v.x || b[1]<v.y || b[2]>v.x+v.width || b[3]>v.y+v.height)) viewAnchor.value = [...b];
 }
 function advance(changed: boolean): void {
   advancing.value = true;
@@ -206,23 +262,35 @@ async function save(): Promise<void> {
     <form ref="form" @submit.prevent="save">
       <div v-if="saved && draft && scene && bounds" class="sct-edit-grid">
         <div>
-          <svg ref="svg" class="sct-zoom" :class="{'sct-grabbing': drag?.moving}" :viewBox="scene.viewBox" role="img" tabindex="0" aria-label="Sign with editable box"
+          <svg ref="svg" class="sct-zoom" :class="{'sct-grabbing': drag?.mode === 'move'}" :data-grip="drag?.mode" :viewBox="scene.viewBox" role="img" tabindex="0" aria-label="Sign with editable box"
                @pointerdown="down" @pointermove="draw" @pointerup="finish" @pointercancel="finish" @lostpointercapture="finish">
             <image :href="scene.href" x="0" y="0" :width="saved.picture.width" :height="saved.picture.height" preserveAspectRatio="none"/>
             <rect class="sct-box" :x="bounds[0]" :y="bounds[1]" :width="bounds[2]-bounds[0]" :height="bounds[3]-bounds[1]"
                   fill="none" stroke="#ffdc00" stroke-width="2" vector-effect="non-scaling-stroke"/>
+            <g v-for="h in handles" :key="h.grip">
+              <rect :x="h.x-h.size/2" :y="h.y-h.size/2" :width="h.size" :height="h.size" fill="#ffdc00" stroke="#282000"
+                    stroke-width="1" vector-effect="non-scaling-stroke" pointer-events="none"/>
+              <rect :data-grip="h.grip" :x="h.x-h.width/2" :y="h.y-h.height/2" :width="h.width" :height="h.height" fill="transparent"/>
+            </g>
           </svg>
-          <small>Drag inside the box to move it, or start outside to redraw.</small>
-          <div class="sct-actions"><button type="button" class="btn small" :disabled="busy || stale || remove" @click="fit">Fit with AI</button>
+          <small>Drag an edge or corner to resize, the centre to move, or outside to redraw.</small>
+          <div class="sct-actions">
+            <button type="button" class="btn small" :disabled="busy || stale || remove || holdsPlate(draft)" aria-keyshortcuts="C"
+                    :title="holdsPlate(draft) ? 'The box includes a plate; use Fit with AI for both.' : 'Fit the selected box locally'"
+                    @click="fit('local')">Fit box <kbd>C</kbd></button>
+            <button type="button" class="btn small" :disabled="busy || stale || remove" aria-keyshortcuts="Shift+C" @click="fit()">Fit with AI <kbd>⇧ C</kbd></button>
             <button type="button" class="btn small" :disabled="busy || stale || remove || holdsPlate(draft)" aria-keyshortcuts="Q" @click="square">Square <kbd>Q</kbd></button>
             <button type="button" class="btn small" :disabled="busy || stale || remove" aria-keyshortcuts="Shift+ArrowUp" @click="resize(1)">Grow <kbd>⇧ ↑</kbd></button>
             <button type="button" class="btn small" :disabled="busy || stale || remove" aria-keyshortcuts="Shift+ArrowDown" @click="resize(-1)">Shrink <kbd>⇧ ↓</kbd></button></div>
         </div>
         <fieldset :disabled="busy || stale || remove">
-          <label>Sign<select aria-label="Sign" :value="label" @change="changeLabel">
+          <div><div class="sct-sign-heading"><label for="quick-sign">Sign</label>
+            <button class="btn small" type="button" aria-keyshortcuts="M" :aria-pressed="label === motorwayDirection"
+                    @click="changeLabel(motorwayDirection)">Motorway direction <kbd>M</kbd></button></div>
+            <select id="quick-sign" :value="label" @change="changeLabel(($event.target as HTMLSelectElement).value)">
             <optgroup label="Sign type"><option v-for="f in FAMILIES" :key="f.id" :value="f.id">{{ f.label }}</option></optgroup>
             <optgroup v-for="g in SIGN_KIND_GROUPS" :key="g.label" :label="g.label"><option v-for="k in g.kinds" :key="k.id" :value="'kind:'+k.id">{{ k.chip }}</option></optgroup>
-          </select></label>
+            </select></div>
           <label class="sct-painted"><input type="checkbox" :checked="isPainted(draft)" @change="togglePaintedBox(draft)"> Painted on the road</label>
           <div v-if="hasSpeed"><label for="quick-speed">Speed ({{ draft.sign_unit === 'mph' ? 'mph' : 'km/h' }})</label>
             <div class="sct-speed-entry"><input id="quick-speed" type="number" min="5" max="250" step="1"
