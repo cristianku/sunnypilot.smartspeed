@@ -2,7 +2,7 @@
 // The editor of the selected box: where it comes from and Fit box (its zoom is inside the photo, ZoomInset.vue), the
 // labels used last, road, speed signs, other value, type and kinds of other signs, details.
 import {computed, ref, watch} from 'vue';
-import {BOOLEAN_FIELDS, FAMILIES, PANELS, PLATE_DISTANCE_MAX_M, PLATE_HOURS, ROADS, SELECT_FIELDS,
+import {BOOLEAN_FIELDS, FAMILIES, PANELS, PLATE_HOURS, ROADS, SELECT_FIELDS,
   SIGN_KIND_GROUPS, familyHasValue, holdsPlate, takesDistance, type BooleanField,
   type SelectField} from './catalog';
 import {aiBlocker, canFitLocally, fitBox, fitLocal, fitting, localFitting} from './ai';
@@ -12,6 +12,7 @@ import {setFamily, setField, setKind, setOnVehicle, setOtherOurs, setValue, squa
 import {workOf} from './frames';
 import {vFill} from './fill';
 import LightChips from './LightChips.vue';
+import PlateDistance from './PlateDistance.vue';
 import SpeedValueChips from './SpeedValueChips.vue';
 import {report, state} from './store';
 import type {Detection, FrameRow} from './types';
@@ -38,10 +39,6 @@ const panels = computed(() => PANELS.filter((item) => item.id !== 'distance'
   || (props.detection !== null && takesDistance(props.detection))));
 const plateNote = computed(() => props.detection === null || !holdsPlate(props.detection) ? ''
   : panel.value === 'distance' ? 'The box takes the sign and the plate.' : 'The box takes the disc and the plate.');
-// The metres written on a plate of distance; empty when they cannot be read.
-const asksDistance = computed(() => panel.value === 'distance');
-const metresError = ref(false);
-watch(() => [props.row.frame_key, state.selected], () => { metresError.value = false; });
 // O X U and G P R E M on a keyboard (use-keyboard.ts).
 const ROAD_KEYS: Record<string, string> = {own_road: 'O', other_road: 'X', unresolved: 'U'};
 /** The traffic lights, the kind given most, are LightChips.vue; the other kinds under Type. */
@@ -106,21 +103,6 @@ function hoursChanged(side: 0 | 1, event: Event): void {
   if ((props.detection?.plate_hours ?? null) !== value) setField('plate_hours', value);
   releaseFocus(event);
 }
-function metresChanged(event: Event): void {
-  const input = event.target as HTMLInputElement;
-  // Typed but not a number ("1,2"): the browser gives an empty value, which must not clear the metres read.
-  if (input.validity.badInput) {
-    metresError.value = true;
-    return;
-  }
-  const raw = input.value.trim();
-  const value = raw === '' ? null : Number(raw);
-  metresError.value = value !== null && (!Number.isInteger(value) || value < 1 || value > PLATE_DISTANCE_MAX_M);
-  if (metresError.value) return;
-  if ((props.detection?.plate_distance_m ?? null) !== value) setField('plate_distance_m', value);
-  // Back to the page's keys (A, next...), as after the hours.
-  releaseFocus(event);
-}
 function booleanChanged(key: BooleanField, event: Event): void {
   const value = (event.target as HTMLSelectElement).value;
   setField(key, value === 'true' ? true : value === 'false' ? false : null);
@@ -177,15 +159,7 @@ function booleanChanged(key: BooleanField, event: Event): void {
               @click="setField('supplementary_panel', panel === item.id ? 'unknown' : item.id); releaseFocus($event)">{{ item.label }}</button>
     </div>
     <p v-if="plateNote" class="effect-note" id="plateNote">{{ plateNote }}</p>
-    <!-- The distance written on the plate ("15 m", "1,2 km" is 1200); empty when it cannot be read. -->
-    <div v-if="asksDistance" id="plateDistance" class="value-line">
-      <label for="plateMetres">Metres</label>
-      <input v-fill="detection?.plate_distance_m == null ? '' : String(detection.plate_distance_m)" type="number"
-             id="plateMetres" :min="1" :max="PLATE_DISTANCE_MAX_M" step="1" inputmode="numeric" placeholder="–"
-             aria-label="Distance written on the plate, in metres" @change="metresChanged">
-    </div>
-    <p v-if="asksDistance" class="field-error" id="metresError" :hidden="!metresError">Type whole metres from 1 to
-      {{ PLATE_DISTANCE_MAX_M }} (1,2 km is 1200), or leave it empty if it cannot be read.</p>
+    <PlateDistance v-if="!report.embedded && detection" :key="row.frame_key + ':' + state.selected" :detection="detection"/>
     <!-- The hours written on the plate; empty when they cannot be read, or the plate has days or two ranges. -->
     <div v-if="asksHours" id="plateHours" class="value-line plate-hours">
       <label for="hoursFrom">From</label>

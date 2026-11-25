@@ -66,10 +66,15 @@ class SignCatalog:
                     stamp, confirmed_boxes(self.store, route, run) if stamp[1] is not None else [])
             self._routes = current
         counts = Counter()
+        examples = {}
         selected = []
         for _stamp, items in current.values():
             for item in items:
                 counts[item['group']] += 1
+                if not group and not item['group'].startswith('speed:'):
+                    previous = examples.get(item['group'])
+                    if previous is None or min(item['width'], item['height']) > min(previous['width'], previous['height']):
+                        examples[item['group']] = item
                 if item['group'] == group:
                     selected.append(item)
         # Tiny boxes first; this is only a ranking, not a judgement that the number is unreadable.
@@ -85,4 +90,6 @@ class SignCatalog:
                 drive = drive_of(self.root, route)
                 names[route] = {'title': drive.get('title'), 'editor': signs_url(route)}
             result.append({**item, **names[route]})
-        return {'ok': True, 'groups': dict(counts), 'items': result, 'page': page, 'pages': pages}
+        return {'ok': True, 'groups': dict(counts), 'items': result, 'page': page, 'pages': pages,
+                'examples': {key: {name: item[name] for name in ('route', 'frame', 'run', 'box')}
+                             for key, item in examples.items()}}

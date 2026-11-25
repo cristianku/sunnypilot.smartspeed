@@ -21,6 +21,7 @@ interface Item {
 }
 interface Catalog {
   groups: Record<string, number>;
+  examples?: Record<string, Pick<Item, 'route' | 'run' | 'frame' | 'box'>>;
   items: Item[];
   page: number;
   pages: number;
@@ -47,10 +48,13 @@ function groupLabel(key: string): string {
 
 const collator = new Intl.Collator('en', {numeric: true});
 const choices = computed(() => {
-  const counts = {...current.value?.groups};
-  // Keep the chosen value if the last matching box was just corrected.
-  if (group.value && counts[group.value] === undefined) counts[group.value] = 0;
-  const options = Object.entries(counts).map(([key, count]) => ({key, count, label: groupLabel(key)}));
+  const options = Object.entries(current.value?.groups ?? {}).filter(([, count]) => count > 0)
+    .map(([key, count]) => {
+      const [type, unit, value] = key.split(':');
+      return {key, count, label: groupLabel(key), speed: type === 'speed', mph: unit === 'mph',
+        number: value ?? '?', chip: type === 'kind' ? signKindOf(unit)?.chip ?? groupLabel(key) : groupLabel(key),
+        example: current.value?.examples?.[key]};
+    });
   options.sort((a, b) => collator.compare(a.label, b.label));
   return [
     {label: 'Speed signs', options: options.filter(({key}) => key.startsWith('speed:'))},
@@ -80,9 +84,9 @@ async function load(): Promise<void> {
 }
 watch([group, page], load, {immediate: true});
 
-function choose(event: Event): void {
+function choose(key: string): void {
   page.value = 1;
-  group.value = (event.target as HTMLSelectElement).value;
+  group.value = key;
 }
 
 function changePage(delta: number): void {
@@ -90,7 +94,7 @@ function changePage(delta: number): void {
   page.value = current.value.page + delta;
 }
 
-function thumbnail(item: Item): string {
+function thumbnail(item: Pick<Item, 'route' | 'run' | 'frame' | 'box'>): string {
   const args = new URLSearchParams({box: item.box.bbox_xyxy.join(','), run: item.run});
   return `/api/route/${item.route}/frame/${item.frame}/classifier-crop?` + args;
 }
@@ -136,14 +140,9 @@ async function fit(item: Item): Promise<void> {
       <h2 id="sign-catalog-title">Sign catalog</h2>
       <span v-if="current && group && !loading" class="ds-when">{{ plural(current.groups[group] ?? 0, 'confirmed box') }}</span>
     </div>
-    <div class="sct-actions">
-      <label for="sign-catalog-group">Label</label>
-      <select id="sign-catalog-group" :value="group" @change="choose">
-        <option value="">Choose a sign</option>
-        <optgroup v-for="section in choices.filter((entry) => entry.options.length)" :key="section.label" :label="section.label">
-          <option v-for="option in section.options" :key="option.key" :value="option.key">{{ option.label }} · {{ thousands(option.count) }}</option>
-        </optgroup>
-      </select>
+    <div v-if="group" class="sct-actions">
+      <button type="button" class="btn small" @click="choose('')">‹ All signs</button>
+      <strong id="catalog-selection">{{ groupLabel(group) }}</strong>
       <span v-if="group && current?.items.length && !loading">Smallest boxes first</span>
       <label v-if="group && current?.items.length && !loading" title="Expand the proposed box to a square without cutting off the sign. Signs with a plate keep their shape.">
         <input v-model="square" type="checkbox"> Square fit
@@ -151,7 +150,27 @@ async function fit(item: Item): Promise<void> {
     </div>
     <p v-if="error" class="empty" role="alert">{{ error }} <button type="button" class="link-button" @click="load">Retry</button></p>
     <p v-else-if="loading" class="empty" role="status">Loading signs…</p>
-    <p v-else-if="!group" class="empty">Choose a label to see its confirmed signs across all drives.</p>
+    <div v-else-if="!group" class="sign-editor sct-index">
+      <p v-if="!choices.some(section => section.options.length)" class="empty">No signs have been confirmed yet.</p>
+      <section v-for="section in choices.filter(s => s.options.length)" :key="section.label">
+        <h3>{{ section.label }}</h3>
+        <ul class="sct-labels">
+          <li v-for="option in section.options" :key="option.key">
+            <button type="button" class="chip recent sct-label" :data-group="option.key"
+                    :aria-label="option.label + ' · ' + plural(option.count, 'confirmed box')" :title="option.label"
+                    @click="choose(option.key)">
+              <span v-if="option.speed" class="sign" :class="{us: option.mph, unknown: option.number === '?', wide: option.number.length > 2}">
+                <template v-if="option.mph"><span class="us-top">SPEED<br>LIMIT</span><span class="us-num">{{ option.number }}</span></template>
+                <template v-else>{{ option.number }}</template>
+              </span>
+              <template v-else><img v-if="option.example" :src="thumbnail(option.example)" loading="lazy" alt="">
+                {{ option.chip }}</template>
+              <span class="sct-count">{{ thousands(option.count) }}</span>
+            </button>
+          </li>
+        </ul>
+      </section>
+    </div>
     <p v-else-if="!current?.items.length" class="empty">No confirmed signs with this label.</p>
     <template v-else>
       <ul class="sct-grid">

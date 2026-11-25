@@ -54,6 +54,7 @@ import LightChips from '../review/LightChips.vue';
 import SignEditorPanel from '../review/SignEditorPanel.vue';
 import SignEditorStage from '../review/SignEditorStage.vue';
 import SpeedValueChips from '../review/SpeedValueChips.vue';
+import PlateDistance from '../review/PlateDistance.vue';
 import {report as editReport, rowOf, state as editState} from '../review/store';
 import {clockOf, type ScanState, secondOf as frameSecondOf, type SyncSegment} from './drive-review';
 import DriveReviewDrive from './DriveReviewDrive.vue';
@@ -1046,6 +1047,7 @@ function worksIn(from: number, to: number) {
     <template #title-below>
       <div v-if="editing && editRow && (onFrame || alone)" class="sign-editor sr-title-speeds">
         <SpeedValueChips :row="editRow" :detection="selectedBox"/>
+        <PlateDistance v-if="selectedBox" :key="editRow.frame_key + ':' + editState.selected" :detection="selectedBox"/>
       </div>
     </template>
     <template #hud>

@@ -170,6 +170,23 @@ with sync_playwright() as p:
         expect(pick('unknown')).to_have_attribute('aria-pressed', 'true')
         page.locator('#keysToggle').click()
         expect(page.locator('#keys')).to_contain_text('number not readable')
+        page.locator('#keysToggle').click()
+        metres = page.locator('.sr-title-speeds #plateMetres')
+        expect(metres).to_be_visible()
+        expect(page.locator('#editor #plateMetres')).to_have_count(0)
+        page.locator('[data-kind="dangerous_bend_left"]').click()
+        metres.fill('70')
+        metres.press('Enter')
+        expect(page.locator('[data-panel="distance"]')).to_have_attribute('aria-pressed', 'true')
+        expect(page.locator('[data-kind="dangerous_bend_left"]')).to_have_attribute('aria-pressed', 'true')
+        expect(metres).to_have_value('70')
+        page.locator('[data-kind="dangerous_bend_right"]').click()
+        expect(metres).to_have_value('70')
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        import os
+        if os.environ.get('NNSLR_PICKER_SCREENSHOTS'):
+            title.scroll_into_view_if_needed()
+            page.screenshot(path=f'/tmp/opencode/sign-metres-{width}.png')
         assert writes == [], writes
         page.close()
 '''

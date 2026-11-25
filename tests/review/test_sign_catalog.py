@@ -74,8 +74,13 @@ def test_catalog_links_to_the_selected_box_in_both_editors(tmp_path, monkeypatch
     chromium = os.environ.get('NNSLR_TEST_CHROMIUM')
     if not chromium or subprocess.run([python, '-c', 'import playwright.sync_api'], capture_output=True).returncode:
         pytest.skip('optional Playwright environment not configured')
-    server, _rows = setup_catalog(tmp_path)
+    server, rows = setup_catalog(tmp_path)
     try:
+        body = page_body(rows[0], base_revision=1, value_kph=60)
+        body['detections'].append({'detection_id': 'manual-2', 'family': 'other_sign', 'sign_type': 'dangerous_bend_left',
+                                   'value_kph': None, 'bbox_xyxy': [19, 3, 29, 17], 'applicability': 'own_road',
+                                   'supplementary_panel': 'distance', 'plate_distance_m': 70})
+        assert server.post_frame(ROUTE, '0/0', body)[0] == 200
         for width, embedded in ((820, False), (1180, True)):
             monkeypatch.setattr(server.app, 'opens_in_speed_review', lambda _route: embedded)
             result = subprocess.run([python, '-c', CATALOG_BROWSER, f'http://127.0.0.1:{server.port}', chromium,
@@ -113,7 +118,15 @@ with sync_playwright() as p:
     page.goto(base + '/speed-review')
     page.get_by_role('link', name='Sign catalog', exact=True).click()
     expect(page).to_have_url(base + '/sign-catalog')
-    page.locator('#sign-catalog-group').select_option('speed:kmh:60')
+    expect(page.locator('.sct-index button[data-group]')).to_have_count(3)
+    bend = page.locator('[data-group="kind:dangerous_bend_left"]')
+    expect(bend).to_contain_text('Bend left')
+    assert bend.locator('img').evaluate('(i)=>i.decode().then(()=>i.naturalWidth>0)')
+    bend.click()
+    expect(page.locator('.sct-tile')).to_have_count(1)
+    page.get_by_role('button', name='All signs').click()
+    expect(page.locator('[data-group="speed:kmh:60"] .sign')).to_have_text('60')
+    page.locator('[data-group="speed:kmh:60"]').click()
     expect(page.locator('.sct-tile')).to_have_count(3)
     first = page.locator('.sct-tile').first
     assert '2%2F1521' in first.get_attribute('href')
@@ -150,7 +163,9 @@ with sync_playwright() as p:
         expect(page.locator('#quickValues [data-value="unknown"]')).to_have_attribute('aria-pressed', 'true')
     page.get_by_role('link', name='Sign catalog').click()
     assert page.url.startswith(base + '/sign-catalog?')
-    expect(page.locator('#sign-catalog-group')).to_have_value('speed:kmh:60')
+    expect(page.locator('#catalog-selection')).to_have_text('60 km/h')
     expect(page.locator('.sct-tile')).to_have_count(3)
+    page.get_by_role('button', name='All signs').click()
+    expect(page.locator('.sct-index button[data-group]')).to_have_count(3)
     assert writes == [], writes
 '''

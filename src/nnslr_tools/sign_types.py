@@ -60,6 +60,8 @@ SIGN_TYPES = (
     'road_user_bus', 'road_user_tram', 'road_user_other',
     # Added 16 Nov 2026 (#103), after the last one: the kinds before keep their place (the brain's road_signs columns)
     'merging_traffic',
+    # Keep the existing indices; direction is as seen by the approaching driver.
+    'dangerous_bend_left', 'dangerous_bend_right',
 )
 ROAD_USER_PREFIX = 'road_user_'
 # The kinds that are no sign: who is on the road.

@@ -1,7 +1,7 @@
 // Changes to the frame on screen: type, value, road and details of the selected box, boxes added (drawn or
 // taken from the second reading) and removed, drawing mode and second reading on or off.
 import {nextTick, toRaw} from 'vue';
-import {ON_VEHICLE, dropStaleKind, familyForHint, familyHasValue, holdsPlate, signStyleOf} from './catalog';
+import {ON_VEHICLE, dropStaleKind, familyForHint, familyHasValue, holdsPlate, signStyleOf, takesDistance} from './catalog';
 import {writeLocal} from './dom';
 import {countryOf, currentRow, selectedDetection, workOf} from './frames';
 import {isBox} from './geometry';
@@ -182,6 +182,16 @@ export function applyLabel(label: Label): void {
 export function setField<K extends keyof Detection>(key: K, value: Detection[K]): void {
   editSelected((d) => {
     d[key] = value;
+  });
+}
+
+/** Setting metres selects the distance plate without changing the kind or speed of the sign. */
+export function setPlateDistance(metres: number | null): void {
+  const d = selectedDetection();
+  if (!d || !takesDistance(d)) return;
+  editSelected((box) => {
+    if (metres !== null) box.supplementary_panel = 'distance';
+    box.plate_distance_m = metres;
   });
 }
 
