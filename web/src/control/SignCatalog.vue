@@ -14,6 +14,8 @@ interface Catalog {
   items: Item[];
   page: number;
   pages: number;
+  page_size?: number;
+  firstApiPage?: number;
   sequence?: SignRef[];
 }
 
@@ -56,11 +58,23 @@ const choices = computed(() => {
 
 async function load(): Promise<void> {
   const mine = ++request;
-  const params = new URLSearchParams({group: group.value, page: String(page.value), sequence: '1'});
+  const key = group.value, wanted = page.value;
+  const readPage = (n: number, sequence = false) => api<Catalog>('/api/speed-review/sign-catalog?' +
+    new URLSearchParams({group: key, page: String(n), sequence: sequence ? '1' : '0'}));
   error.value = '';
   loading.value = true;
   try {
-    const result = await api<Catalog>('/api/speed-review/sign-catalog?' + params);
+    let result = await readPage(wanted, true);
+    // The live page can update before the service. Combine the old API's 24-item batches into the same gallery.
+    if (mine === request && key && !result.page_size) {
+      const batches = 5;
+      const pages = Math.ceil(result.pages / batches);
+      const gallery = Math.min(wanted, pages), first = (gallery - 1) * batches + 1;
+      const n = Math.min(batches, result.pages - first + 1);
+      const parts = await Promise.all(Array.from({length: n}, (_, i) =>
+        first + i === result.page ? result : readPage(first + i)));
+      result = {...result, items: parts.flatMap(part => part.items), page: gallery, pages, firstApiPage: first};
+    }
     if (mine !== request) return;
     current.value = result;
     const selection = new URLSearchParams();
@@ -105,7 +119,7 @@ function open(item: Item, fit = false): void {
   position = list.findIndex(r => sameRef(r, refOf(item)));
   if (position < 0) return;
   seen.clear(); list.slice(0, position).forEach(r => seen.add(JSON.stringify(r)));
-  legacyPage = current.value.sequence ? 0 : current.value.page;
+  legacyPage = current.value.sequence ? 0 : current.value.firstApiPage ?? current.value.page;
   autoFit.value = fit; edited = false; target.value = list[position]!;
 }
 function closeEditor(): void {

@@ -8,7 +8,7 @@ from nnslr_tools.drives import drive_of
 from nnslr_tools.review_db import waits_for_a_person
 from nnslr_tools.sign_types import ROAD_USERS
 
-PAGE_SIZE = 24
+PAGE_SIZE = 120
 SPEED_FAMILIES = ('maximum_speed', 'variable_display', 'zone')
 
 
@@ -90,7 +90,7 @@ class SignCatalog:
                 drive = drive_of(self.root, route)
                 names[route] = {'title': drive.get('title'), 'editor': signs_url(route)}
             result.append({**item, **names[route]})
-        return {'ok': True, 'groups': dict(counts), 'items': result, 'page': page, 'pages': pages,
+        return {'ok': True, 'groups': dict(counts), 'items': result, 'page': page, 'pages': pages, 'page_size': PAGE_SIZE,
                 **({'sequence': [[i['route'], i['run'], i['frame'], i['box']['detection_id']] for i in selected]}
                    if sequence and group else {}),
                 'examples': {key: {name: item[name] for name in ('route', 'frame', 'run', 'box')}

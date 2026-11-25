@@ -130,6 +130,12 @@ with sync_playwright() as p:
     assert bend.locator('img').evaluate('(i)=>i.decode().then(()=>i.naturalWidth>0)')
     bend.click()
     expect(page.locator('.sct-tile')).to_have_count(1)
+    page.locator('.sct-tile').click()
+    bend_form = page.get_by_role('dialog', name='Quick edit')
+    bend_form.get_by_label('Painted on the road').check()
+    expect(bend_form.get_by_label('Sign', exact=True)).to_have_value('kind:dangerous_bend_left')
+    bend_form.get_by_role('button', name='Close').click()
+    bend_form.get_by_role('button', name='Discard and close').click()
     page.get_by_role('button', name='All signs').click()
     expect(page.locator('[data-group="speed:kmh:60"] .sign')).to_have_text('60')
     page.locator('[data-group="speed:kmh:60"]').click()
@@ -181,11 +187,20 @@ with sync_playwright() as p:
     assert abs(w-h)<1e-6
     # Dragging the interior moves the whole square; dragging past the edge clamps it to the frame.
     centre = rect.bounding_box()
-    px,py = centre['x']+centre['width']/2, centre['y']+centre['height']/2
+    px,py = round(centre['x']+centre['width']/2), round(centre['y']+centre['height']/2)
     page.mouse.move(px,py)
     assert rect.evaluate("r=>getComputedStyle(r).cursor") == 'grab'
+    page.mouse.click(px,py)
+    assert coords() == [x,y,w,h]
     page.mouse.down()
     assert zoom.evaluate("s=>getComputedStyle(s).cursor") == 'grabbing'
+    scale = zoom.evaluate('s=>s.getScreenCTM().a')
+    page.mouse.move(px+1,py+1)
+    xx,yy,ww,hh = coords()
+    assert 0 < xx-x < 1 and abs((xx-x)*scale-1)<1e-5 and abs((yy-y)*scale-1)<1e-5
+    assert abs(ww-w)<1e-6 and abs(hh-h)<1e-6
+    page.mouse.move(px,py)
+    assert all(abs(a-b)<1e-6 for a,b in zip(coords(),[x,y,w,h]))
     page.mouse.move(px+200,py)
     page.mouse.up()
     xx,yy,ww,hh = coords()
@@ -210,13 +225,17 @@ with sync_playwright() as p:
     if int(embedded):
         confirm = True
         dialog.get_by_label('Speed (km/h)').fill('80')
+        page.keyboard.press('?')
+        expect(dialog.get_by_label('Speed (km/h)')).to_have_value('')
+        expect(dialog.get_by_role('button', name='Number not readable')).to_have_attribute('aria-pressed', 'true')
         with page.expect_response(lambda r: r.request.method == 'POST' and r.url.endswith('/frame/2/1521')) as saved:
             page.keyboard.press('Enter')
         assert saved.value.status == 200
         first_box, fitted = saves[0]['detections']
         assert first_box['bbox_xyxy'] == [1, 2, 15, 20] and first_box['value_kph'] == 50
         assert fitted['box_source'] == 'ai_fit' and fitted['bbox_xyxy'] == [17, 2.5, 30, 15.5]
-        assert fitted['value_kph'] == 80
+        assert fitted['value_kph'] is None and fitted['sign_value'] is None and fitted['value_state'] == 'unknown'
+        assert fitted['family'] == 'maximum_speed' and fitted['applicability'] == 'own_road'
         expect(dialog.locator('a')).to_have_attribute('href', __import__('re').compile('frame=0%2F0'))
         expect(dialog.get_by_label('Speed (km/h)')).to_have_value('60')
         dialog.get_by_role('button',name='Close').click()
@@ -228,7 +247,9 @@ with sync_playwright() as p:
         dialog.get_by_role('button',name='Reload sign').click()
         expect(dialog.get_by_role('button',name='Next sign')).to_be_enabled()
         expect(boxes).to_have_attribute('width', '9')
-        dialog.get_by_label('Speed (km/h)').fill('55')
+        dialog.locator('.sct-zoom').focus()
+        page.keyboard.press('?')
+        expect(dialog.get_by_label('Speed (km/h)')).to_have_value('')
         dialog.get_by_role('button',name='Close').click()
         dialog.get_by_role('button',name='Discard and close').click()
     assert page.url.startswith(base + '/sign-catalog?')
@@ -236,5 +257,20 @@ with sync_playwright() as p:
     expect(page.locator('.sct-tile')).to_have_count(2 if int(embedded) else 3)
     page.get_by_role('button', name='All signs').click()
     expect(page.locator('.sct-index button[data-group]')).to_have_count(4 if int(embedded) else 3)
+    if int(embedded):
+        expect(page.locator('[data-group="speed:unknown"]')).to_be_visible()
+        page.locator('[data-group="speed:kmh:50"]').click()
+        page.locator('.sct-tile').click()
+        dialog.get_by_label('Sign', exact=True).select_option('zone')
+        dialog.get_by_label('Speed (km/h)').fill('30')
+        dialog.get_by_label('Painted on the road').check()
+        expect(dialog.get_by_label('Sign', exact=True)).to_have_value('road_marking_candidate')
+        expect(dialog.get_by_label('Speed (km/h)')).to_have_value('30')
+        with page.expect_response(lambda r: r.request.method == 'POST' and r.url.endswith('/frame/2/1521')) as saved:
+            page.keyboard.press('Enter')
+        assert saved.value.status == 200
+        marking, neighbour = saved.value.json()['review']['detections']
+        assert marking['family'] == 'road_marking_candidate' and marking['value_kph'] == 30
+        assert neighbour['value_state'] == 'unknown' and neighbour['detection_id'] == 'manual-1'
     assert writes == [], writes
 '''

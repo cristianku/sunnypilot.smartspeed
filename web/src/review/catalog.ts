@@ -38,6 +38,29 @@ export function signStyleOf(country: string | null): SignStyle {
  * vehicle, such as the top-speed sticker on the back of a truck. */
 export const ON_VEHICLE = 'on_vehicle';
 
+export const PAINTED_AS_MARKING = new Set(['maximum_speed', 'zone']);
+
+export function isPainted(d: Detection): boolean {
+  return d.family === 'road_marking_candidate' || (d.family === 'other_sign' && d.painted === true);
+}
+
+/** Both editors store painted numbers as road markings and painted pictograms as Other signs with their kind. */
+export function togglePaintedBox(d: Detection): void {
+  if (d.family === 'road_marking_candidate') d.family = 'maximum_speed';
+  else if (PAINTED_AS_MARKING.has(d.family)) d.family = 'road_marking_candidate';
+  else {
+    const painted = !isPainted(d);
+    if (d.family !== 'other_sign') delete d.sign_type;
+    d.family = 'other_sign';
+    d.value_kph = null;
+    if (d.sign_value !== undefined) d.sign_value = null;
+    d.value_state = 'unknown';
+    if (painted) d.painted = true;
+    else delete d.painted;
+  }
+  dropStaleKind(d);
+}
+
 /** Drops a kind the box's family cannot have: one left from an "Other sign" (a direction, say) whose number was then
  * typed, which made it a speed limit. The server refuses such a box, so it goes before every save too. */
 export function dropStaleKind(d: Detection): void {

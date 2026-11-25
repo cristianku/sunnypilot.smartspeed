@@ -3,7 +3,8 @@ import {computed, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef, w
 import {api, ApiError, messageOf, post} from '../common/api';
 import type {AuthState} from '../common/auth-types';
 import {readLocal} from '../review/dom';
-import {describe, dropStaleKind, FAMILIES, familyHasValue, holdsPlate, PANELS, PLATE_DISTANCE_MAX_M, ROADS, SIGN_KIND_GROUPS, takesDistance} from '../review/catalog';
+import {describe, dropStaleKind, FAMILIES, familyHasValue, holdsPlate, isPainted, PANELS, PLATE_DISTANCE_MAX_M,
+  ROADS, SIGN_KIND_GROUPS, takesDistance, togglePaintedBox} from '../review/catalog';
 import {zoomView} from '../review/overlay';
 import {sameBox, scaleBox} from '../review/geometry';
 import type {Box, Detection, SaveAnswer} from '../review/types';
@@ -62,6 +63,7 @@ function close(): void {
 function changeLabel(e: Event): void {
   const d = draft.value!;
   const value = (e.target as HTMLSelectElement).value;
+  if (d.family === 'road_marking_candidate' && (value.startsWith('kind:') || value === 'other_sign')) d.painted = true;
   d.family = value.startsWith('kind:') ? 'other_sign' : value;
   d.sign_type = value.startsWith('kind:') ? value.slice(5) : null;
   if (!familyHasValue(d.family)) { d.value_kph = null; d.sign_value = null; d.value_state = 'unknown'; }
@@ -71,8 +73,8 @@ function number(e: Event): number | null {
   const el = e.target as HTMLInputElement;
   return el.value === '' ? null : el.valueAsNumber;
 }
-function speed(e: Event): void {
-  const d = draft.value!, v = number(e);
+function setSpeed(v: number | null): void {
+  const d = draft.value!;
   d.value_kph = v; d.sign_value = v; d.value_state = v === null ? 'unknown' : 'reviewed';
 }
 function metres(e: Event): void {
@@ -107,8 +109,10 @@ function shortcut(e: KeyboardEvent): void {
     return;
   }
   if (busy.value || stale.value || remove.value || !draft.value || advancing.value || drag.value) return;
-  if (e.target instanceof Element && e.target.closest('input,select,textarea,[contenteditable="true"]')) return;
-  if (!e.shiftKey && e.key.toLowerCase() === 'q') square();
+  const field = e.target instanceof Element && e.target.closest('input,select,textarea,[contenteditable="true"]');
+  if (e.key === '?' && hasSpeed.value && (!field || field.id === 'quick-speed')) setSpeed(null);
+  else if (field) return;
+  else if (!e.shiftKey && e.key.toLowerCase() === 'q') square();
   else if (e.shiftKey && e.key === 'ArrowUp') resize(1);
   else if (e.shiftKey && e.key === 'ArrowDown') resize(-1);
   else return;
@@ -135,7 +139,8 @@ function point(e: PointerEvent): [number, number] | null {
   const matrix = svg.value?.getScreenCTM(), picture = saved.value?.picture;
   if (!matrix || !picture) return null;
   const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(matrix.inverse());
-  return [Math.max(0, Math.min(picture.width, Math.round(p.x))), Math.max(0, Math.min(picture.height, Math.round(p.y)))];
+  // One screen pixel can be a small fraction of a frame pixel in the zoom.
+  return [Math.max(0, Math.min(picture.width, p.x)), Math.max(0, Math.min(picture.height, p.y))];
 }
 function down(e: PointerEvent): void {
   if (busy.value || stale.value || remove.value || advancing.value || !bounds.value || drag.value || e.button !== 0) return;
@@ -158,10 +163,10 @@ function draw(e: PointerEvent): void {
     const dy = Math.max(-top, Math.min(saved.value.picture.height - bottom, end[1] - y));
     box = [left + dx, top + dy, right + dx, bottom + dy];
   } else {
-    if (end[0] === x || end[1] === y) return;
+    if (Math.abs(end[0] - x) < 1 || Math.abs(end[1] - y) < 1) return;
     box = [Math.min(x,end[0]), Math.min(y,end[1]), Math.max(x,end[0]), Math.max(y,end[1])];
   }
-  if (!sameBox(box, bounds.value)) setBox(box);
+  if (box.some((value, i) => value !== bounds.value![i])) setBox(box);
 }
 function finish(e: PointerEvent): void {
   if (drag.value?.pointer !== e.pointerId) return;
@@ -196,7 +201,7 @@ async function save(): Promise<void> {
 
 <template>
   <dialog ref="dialog" class="sct-dialog" aria-labelledby="quick-title" @cancel.prevent="close" @keydown="shortcut">
-    <header><div><h2 id="quick-title">Quick edit</h2><small v-if="saved">{{ describe(saved.box) }} · {{ target[2] }}</small></div>
+    <header><div><h2 id="quick-title">Quick edit</h2><small v-if="draft">{{ describe(draft) }} · {{ target[2] }}</small></div>
       <button type="button" class="btn small" @click="close">Close</button></header>
     <form ref="form" @submit.prevent="save">
       <div v-if="saved && draft && scene && bounds" class="sct-edit-grid">
@@ -214,12 +219,17 @@ async function save(): Promise<void> {
             <button type="button" class="btn small" :disabled="busy || stale || remove" aria-keyshortcuts="Shift+ArrowDown" @click="resize(-1)">Shrink <kbd>⇧ ↓</kbd></button></div>
         </div>
         <fieldset :disabled="busy || stale || remove">
-          <label>Sign<select :value="label" @change="changeLabel">
+          <label>Sign<select aria-label="Sign" :value="label" @change="changeLabel">
             <optgroup label="Sign type"><option v-for="f in FAMILIES" :key="f.id" :value="f.id">{{ f.label }}</option></optgroup>
             <optgroup v-for="g in SIGN_KIND_GROUPS" :key="g.label" :label="g.label"><option v-for="k in g.kinds" :key="k.id" :value="'kind:'+k.id">{{ k.chip }}</option></optgroup>
           </select></label>
-          <label v-if="hasSpeed">Speed ({{ draft.sign_unit === 'mph' ? 'mph' : 'km/h' }})<input type="number" min="5" max="250" step="1"
-            :value="draft.sign_value ?? draft.value_kph ?? ''" placeholder="Unknown" @input="speed"></label>
+          <label class="sct-painted"><input type="checkbox" :checked="isPainted(draft)" @change="togglePaintedBox(draft)"> Painted on the road</label>
+          <div v-if="hasSpeed"><label for="quick-speed">Speed ({{ draft.sign_unit === 'mph' ? 'mph' : 'km/h' }})</label>
+            <div class="sct-speed-entry"><input id="quick-speed" type="number" min="5" max="250" step="1"
+              :value="draft.sign_value ?? draft.value_kph ?? ''" placeholder="Unknown" @input="setSpeed(number($event))">
+              <button type="button" class="btn small" aria-keyshortcuts="?" aria-label="Number not readable" title="Number not readable (?)"
+                      :aria-pressed="draft.sign_value == null && draft.value_kph == null" @click="setSpeed(null)">?</button></div>
+          </div>
           <label>Road<select v-model="draft.applicability"><option v-for="r in ROADS" :key="r.id" :value="r.id">{{ r.label }}</option></select></label>
           <label v-if="takesDistance(draft)">Plate<select :value="draft.supplementary_panel || 'unknown'" @change="draft.supplementary_panel = ($event.target as HTMLSelectElement).value; dropStaleKind(draft)">
             <option value="unknown">Unknown</option><option value="unresolved">Unresolved</option>

@@ -3,7 +3,7 @@
 // labels used last, road, speed signs, other value, type and kinds of other signs, details.
 import {computed, ref, watch} from 'vue';
 import {BOOLEAN_FIELDS, FAMILIES, PANELS, PLATE_HOURS, ROADS, SELECT_FIELDS,
-  SIGN_KIND_GROUPS, familyHasValue, holdsPlate, takesDistance, type BooleanField,
+  SIGN_KIND_GROUPS, familyHasValue, holdsPlate, isPainted, takesDistance, type BooleanField,
   type SelectField} from './catalog';
 import {aiBlocker, canFitLocally, fitBox, fitLocal, fitting, localFitting} from './ai';
 import {addedBy, originalOf} from './boxes';
@@ -213,7 +213,7 @@ function booleanChanged(key: BooleanField, event: Event): void {
       <div class="kind-group" role="group" aria-label="Where">
         <span class="kind-group-label">Where</span>
         <button type="button" class="chip kind" id="painted"
-                :aria-pressed="detection?.family === 'road_marking_candidate' || (detection?.family === 'other_sign' && detection?.painted === true)"
+                :aria-pressed="detection !== null && isPainted(detection)"
                 title="A number painted on the road (30, 30 ZONE) is a Road marking with that number"
                 @click="togglePainted(); releaseFocus($event)">Painted on the road</button>
       </div>

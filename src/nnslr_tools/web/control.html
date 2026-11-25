@@ -1635,7 +1635,10 @@ button.rg-row{cursor:pointer}
 .sct-edit-grid{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:16px}
 .sct-edit-grid fieldset{margin:0;padding:0;border:0;display:grid;gap:7px;align-content:start;min-width:0}
 .sct-edit-grid label,.sct-who{display:grid;font-size:13px;gap:2px}
+.sct-speed-entry{display:flex;align-items:center;gap:5px;margin-top:2px}.sct-speed-entry input{min-width:0}
+.sct-speed-entry [aria-pressed=true]{background:var(--accent-soft);color:var(--accent)}
 .sct-edit-grid :is(input,select),.sct-who input{width:100%;min-height:34px;box-sizing:border-box;padding:4px 8px;border:1px solid var(--line-strong);border-radius:8px;background:var(--surface-2);color:var(--fg);font:inherit}
+.sct-edit-grid .sct-painted{display:flex;align-items:center;gap:7px;cursor:pointer}.sct-painted input[type=checkbox]{width:16px;height:16px;min-height:0;margin:0;accent-color:var(--accent)}
 .sct-zoom{width:100%;height:205px;background:#222;border-radius:9px;touch-action:none;cursor:crosshair}
 .sct-zoom .sct-box{pointer-events:all;cursor:grab}.sct-zoom.sct-grabbing,.sct-zoom.sct-grabbing .sct-box{cursor:grabbing}
 .sct-dialog kbd{font:inherit;font-size:.85em;opacity:.75}

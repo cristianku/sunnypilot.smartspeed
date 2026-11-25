@@ -1,7 +1,8 @@
 // Changes to the frame on screen: type, value, road and details of the selected box, boxes added (drawn or
 // taken from the second reading) and removed, drawing mode and second reading on or off.
 import {nextTick, toRaw} from 'vue';
-import {ON_VEHICLE, dropStaleKind, familyForHint, familyHasValue, holdsPlate, signStyleOf, takesDistance} from './catalog';
+import {ON_VEHICLE, PAINTED_AS_MARKING, dropStaleKind, familyForHint, familyHasValue, holdsPlate, isPainted,
+  signStyleOf, takesDistance, togglePaintedBox} from './catalog';
 import {writeLocal} from './dom';
 import {countryOf, currentRow, selectedDetection, workOf} from './frames';
 import {isBox, scaleBox} from './geometry';
@@ -47,14 +48,6 @@ function editSelected(change: (d: Detection) => void): void {
   dropStaleKind(d);
   changed(row);
 }
-
-/** Painted on the road: an "Other sign" with "painted", or a number painted on the road, a Road marking ("30", "30 ZONE"). */
-function isPainted(d: Detection): boolean {
-  return d.family === 'road_marking_candidate' || (d.family === 'other_sign' && d.painted === true);
-}
-
-/** The families a number painted on the road takes the place of: a painted box stays painted when one is chosen. */
-const PAINTED_AS_MARKING = new Set(['maximum_speed', 'zone']);
 
 function applyFamily(d: Detection, id: string): void {
   // A painted box stays painted: a speed limit or a zone painted on the road is a Road marking with its number (#96).
@@ -129,21 +122,7 @@ export function setKind(id: string): void {
  * family of a number painted on the road ("30", "30 ZONE"), and a Road marking pressed again a speed limit (#96). */
 export function togglePainted(): void {
   editSelected((d) => {
-    if (d.family === 'road_marking_candidate') {
-      d.family = 'maximum_speed';
-      return;
-    }
-    if (PAINTED_AS_MARKING.has(d.family ?? '')) {
-      d.family = 'road_marking_candidate';
-      return;
-    }
-    const painted = !(d.family === 'other_sign' && d.painted === true);
-    if (d.family !== 'other_sign') delete d.sign_type;
-    d.family = 'other_sign';
-    d.value_kph = null;
-    d.value_state = 'unknown';
-    if (painted) d.painted = true;
-    else delete d.painted;
+    togglePaintedBox(d);
     state.valueError = false;
   });
 }
