@@ -10,19 +10,19 @@
 import {computed, nextTick, onBeforeUnmount, onMounted, ref} from 'vue';
 import {isGuest} from '../common/guest';
 
-export type ControlTab = 'overview' | 'prepare' | 'dataset' | 'speedreview' | 'signdistance'
+export type ControlTab = 'overview' | 'prepare' | 'dataset' | 'speedreview' | 'signcatalog' | 'signdistance'
   | 'reviewers' | 'train' | 'evaluate' | 'models' | 'drive' | 'publish';
 export type Section = 'overview' | 'data' | 'train' | 'models';
 
 export const TAB_PATH: Record<ControlTab, string> = {
   overview: isGuest() ? '/reviews' : '/', prepare: '/prepare', dataset: '/dataset',
-  speedreview: '/speed-review', signdistance: '/sign-distance', reviewers: '/reviewers', train: '/train', evaluate: '/evaluate', models: '/models',
+  speedreview: '/speed-review', signcatalog: '/sign-catalog', signdistance: '/sign-distance', reviewers: '/reviewers', train: '/train', evaluate: '/evaluate', models: '/models',
   drive: '/drive', publish: '/publish',
 };
 /** The name of each page, in the window title and under its section's title. */
 const TAB_TITLE: Record<ControlTab, string> = {
   overview: 'Overview', prepare: 'Drives', dataset: 'Training dataset',
-  speedreview: 'Speed and sign review', signdistance: 'Sign distance', reviewers: 'Reviewers', train: 'Training', evaluate: 'Results', models: 'Versions',
+  speedreview: 'Speed and sign review', signcatalog: 'Sign catalog', signdistance: 'Sign distance', reviewers: 'Reviewers', train: 'Training', evaluate: 'Results', models: 'Versions',
   drive: 'Drive', publish: 'Publish',
 };
 /** A page of a section: its address and name. */
@@ -36,6 +36,7 @@ export const SECTIONS: Record<Section, {title: string; pages: SectionPage[]}> = 
   overview: {title: 'Overview', pages: []},
   data: {title: 'Data', pages: [{key: 'prepare', href: '/prepare', label: 'Drives'},
     {key: 'speedreview', href: '/speed-review', label: 'Speed and sign review'},
+    {key: 'signcatalog', href: '/sign-catalog', label: 'Sign catalog'},
     {key: 'signdistance', href: '/sign-distance', label: 'Sign distance'},
     {key: 'dataset', href: '/dataset', label: 'Training dataset'}, {key: 'reviewers', href: '/reviewers', label: 'Reviewers'}]},
   train: {title: 'Training', pages: []},
@@ -146,7 +147,7 @@ export function useTabRouting(): void {
   function onClick(event: MouseEvent): void {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     const link = (event.target as Element | null)?.closest<HTMLAnchorElement>('a[href]');
-    if (!link || link.origin !== location.origin || link.target) return;
+    if (!link || link.origin !== location.origin || link.target || link.hasAttribute('data-full-navigation')) return;
     // An anchor on this tab ("#dataset") scrolls as usual.
     if (link.hash && link.pathname === location.pathname) return;
     const tab = tabOf(link.pathname);

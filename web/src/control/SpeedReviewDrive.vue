@@ -49,7 +49,7 @@ import {boxColor, describe, plateTag, shortName} from '../review/catalog';
 import {row as editRow, selectedBox} from '../review/current';
 import {frameKeyAt, loadSignEditor, pictureBaseOf, stopSignEditor, videoFrameOf} from '../review/embed';
 import {frameStatus} from '../review/frames';
-import {linkedFrame, openFrame} from '../review/navigation';
+import {linkedFrame, openFrame, selectLinkedBox} from '../review/navigation';
 import LightChips from '../review/LightChips.vue';
 import SignEditorPanel from '../review/SignEditorPanel.vue';
 import SignEditorStage from '../review/SignEditorStage.vue';
@@ -720,6 +720,7 @@ watch([editing, videoIndex, segments, () => player.value?.videoGone], () => {
   wanted = false;
   if (key === null) return;
   openFrame(key, false);
+  if (key === asked.frame) selectLinkedBox(asked.box);
   if (at === null) return;
   player.value?.pause();
   player.value?.seek(at);
@@ -1029,7 +1030,8 @@ function worksIn(from: number, to: number) {
 </script>
 
 <template>
-  <DriveReviewDrive ref="player" class="sr-view" :class="{'sr-signs-on': showSigns && panel === 'signs'}" :route="route" :read-only="readOnly" tab="speedreview" :back-label="isGuest() ? 'My reviews' : 'Speed and sign review'" simple-lanes
+  <DriveReviewDrive ref="player" class="sr-view" :class="{'sr-signs-on': showSigns && panel === 'signs'}" :route="route" :read-only="readOnly" tab="speedreview" :back-href="isGuest() ? null : asked.catalog"
+                    :back-label="isGuest() ? 'My reviews' : asked.catalog ? 'Sign catalog' : 'Speed and sign review'" simple-lanes
                     :arrows="!(editing && onFrame)" :sharp-base="editing ? pictureBaseOf(route) + 'video/' : null"
                     sharp :rates="RATES" start-zoom="ten" :car-kph="driverKph" :pick-map="!readOnly && !speedOff && panel !== 'interventions'" @time="follow"
                     @pick-map="fromMap" @segments="(value) => { segments = value; }" @index="(value) => { videoIndex = value ?? null; }"

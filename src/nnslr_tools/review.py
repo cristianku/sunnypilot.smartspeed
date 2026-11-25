@@ -43,7 +43,7 @@ import threading
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, quote, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
 
 from nnslr_tools.drives import drive_of
 from nnslr_tools.manifest import parse_route_id
@@ -285,7 +285,9 @@ class ReviewApp(ReviewService):
 
     def __init__(self, root: Path, store, *, token: str | None, require_token: bool, api_token: str | None = None):
         from nnslr_tools.panel import Panel
+        from nnslr_tools.sign_catalog import SignCatalog
         super().__init__(root, store, log=_print_flush)
+        self.sign_catalog = SignCatalog(root, store)
         self.token = token
         self.require_token = require_token
         self.api_token = api_token or token
@@ -927,6 +929,12 @@ def make_handler(app: ReviewApp):
             # [control-panel] - START
             # The control pages: one Vue app, a tab each (web/src/control); the old addresses lead there.
             if path in CONTROL_TABS or (path == GUEST_HOME and self.guest is not None):
+                if path == '/speed-review' and self.guest is None:
+                    query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                    if 'catalog' in query and 'drive' not in query:
+                        params = urlencode({k: query[k][0] for k in ('catalog', 'page') if query.get(k, [''])[0]})
+                        self._redirect('/sign-catalog' + ('?' + params if params else ''), None)
+                        return
                 nonce = secrets.token_urlsafe(18)
                 # img-src: the frames of the Watch panel of the Evaluate tab (the previews of /route/<id>/images/);
                 # media-src: the video of a drive in its player, on Speed review and Models › Drive
@@ -1376,7 +1384,11 @@ def make_handler(app: ReviewApp):
                 at['frame'] = asked['frame']
             if not at:
                 at = app.first_to_review(route)
-            return signs_address(route, **at)
+            address = signs_address(route, **at)
+            if self.guest is None and 'frame' in at and 'catalog' in query:
+                extras = {name: query[name][0] for name in ('catalog', 'page', 'box') if name in query}
+                address += '&' + urlencode(extras)
+            return address
         # [sign-review-retired] - END
 
         def _route_or_none(self, route):
@@ -1714,6 +1726,15 @@ def make_handler(app: ReviewApp):
         def _speed_review_get(self, path):
             """Data › Speed review, reading only: the drives with their blocks, a drive's speed, blocks, roadworks and kinds
             of road, a frame of its road video at full definition (the HD switch)."""
+            if path == '/api/speed-review/sign-catalog':
+                query = parse_qs(urlsplit(self.path).query)
+                group = query.get('group', [''])[0]
+                page = query.get('page', ['1'])[0]
+                if len(group) > 100 or not re.fullmatch(r'[0-9]{1,6}', page):
+                    self._problem(400, 'bad_catalog_filter', 'Invalid sign catalog filter.', True)
+                    return
+                self._json(200, app.sign_catalog.view(group, int(page), app.signs_url))
+                return
             from nnslr_tools import drive_review, speed_review
             store = speed_review.store_for(app.root)
             drives = drive_review.store_for(app.root)

@@ -70,6 +70,17 @@ export function openFrame(key: string, reveal = true): void {
   if (reveal) void nextTick(revealStage);
 }
 
+/** A catalog link chooses an existing box by id, without changing the review or arming Delete. */
+export function selectLinkedBox(id: string | null): void {
+  const row = currentRow();
+  if (row === null || id === null) return;
+  const index = workOf(row).detections.findIndex((box) => box.detection_id === id);
+  if (index >= 0) {
+    state.selected = index;
+    state.selectedByUser = false;
+  }
+}
+
 // The frame to show after a confirmation: the next one still to do under the current filter. Direction -1 (Shift+A
 // again, Apply next, #105): the one before, by the same rules.
 function nextAfterConfirm(key: string, direction = 1): string | null {
@@ -182,6 +193,11 @@ export function linkedFrame(): string | null {
 /** The frame Speed review asked for, else the frame last open in this browser, else the first of the filter, else
  * the first one. */
 export function pickStartFrame(): string | null {
+  const exact = new URLSearchParams(window.location.search).get('frame');
+  if (exact !== null && indexOf(exact) >= 0) {
+    state.filter = 'all';
+    return exact;
+  }
   // The drive at work opens on its newest frame, and follows (review/busy.ts).
   if (report.atWork) return report.rows[report.rows.length - 1]?.frame_key ?? null;
   // From Speed review every frame is shown (not saved as the filter): the moment asked for may be confirmed already.

@@ -19,8 +19,16 @@ export function signsHref(route: string, at: SignMoment | null = null, frame: st
 }
 
 /** What the address of the page asks of the Signs side: the side itself (side=signs) and a frame (frame=<key>). */
-export function askedSigns(search: string = window.location.search): {side: boolean; frame: string | null} {
+export function askedSigns(search: string = window.location.search): {
+  side: boolean; frame: string | null; box: string | null; catalog: string | null;
+} {
   const query = new URLSearchParams(search);
   const frame = query.get('frame');
-  return {side: query.get('side') === 'signs', frame: frame !== null && /^[0-9]{1,9}\/[0-9]{1,9}$/.test(frame) ? frame : null};
+  const catalog = query.get('catalog');
+  const page = query.get('page');
+  const back = new URLSearchParams();
+  if (catalog !== null) back.set('catalog', catalog);
+  if (catalog !== null && page !== null && /^\d{1,6}$/.test(page)) back.set('page', page);
+  return {side: query.get('side') === 'signs', frame: frame !== null && /^[0-9]{1,9}\/[0-9]{1,9}$/.test(frame) ? frame : null,
+    box: query.get('box'), catalog: catalog === null ? null : '/sign-catalog?' + back.toString()};
 }

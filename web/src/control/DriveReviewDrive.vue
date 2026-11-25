@@ -40,6 +40,7 @@ import StageGrip from './StageGrip.vue';
 import {type ControlTab, goTo} from './tabs';
 
 const props = withDefaults(defineProps<{route: string; readOnly: boolean; tab: ControlTab; backLabel: string; backItem?: string; backDrive?: string | null;
+  backHref?: string | null;
   simpleLanes?: boolean; rates?: readonly number[]; startZoom?: Zoom; sharp?: boolean; carKph?: number | null;
   pickMap?: boolean; arrows?: boolean; limits?: boolean; fullScreen?: boolean; sharpBase?: string | null}>(), {simpleLanes: false,
   rates: () => [], sharp: false, startZoom: 'one', pickMap: false, arrows: true, limits: true, fullScreen: false, sharpBase: null});
@@ -847,7 +848,8 @@ watch(() => props.route, () => {
   <section class="card rt-view dr-view" :class="layout" :style="layout.grown ? {'--stage-h': stageHeight + 'px'} : undefined"
            aria-labelledby="dr-view-title">
     <div class="rt-view-head">
-      <button type="button" class="link-button rt-back" @click="back"><span aria-hidden="true">‹</span> {{ backLabel }}</button>
+      <a v-if="backHref" class="link-button rt-back" :href="backHref" data-full-navigation><span aria-hidden="true">‹</span> {{ backLabel }}</a>
+      <button v-else type="button" class="link-button rt-back" @click="back"><span aria-hidden="true">‹</span> {{ backLabel }}</button>
       <div class="dr-view-top">
         <div class="rt-view-name">
           <div class="dr-title-row"><h2 id="dr-view-title">{{ view?.title ?? (guest ? 'Drive' : 'Places unknown') }} <slot name="badge"></slot></h2>

@@ -6,6 +6,7 @@
 // confirm, server, export) and the components below draw it.
 import {computed, nextTick, onBeforeUnmount, onMounted, watchEffect} from 'vue';
 import {isGuest} from '../common/guest';
+import {askedSigns} from '../common/sign-link';
 import {aiPhase, loadAiState} from './ai';
 import AiSection from './AiSection.vue';
 import {watchAiLive} from './ai-live';
@@ -19,7 +20,7 @@ import {unsavedKeys, workOf} from './frames';
 import Inspector from './Inspector.vue';
 import {photoHeight} from './photo-size';
 import MobileBar from './MobileBar.vue';
-import {pickStartFrame, startAtWork} from './navigation';
+import {pickStartFrame, selectLinkedBox, startAtWork} from './navigation';
 import {loadServer, retryUnsaved} from './server';
 import Scrubber from './Scrubber.vue';
 import Stage from './Stage.vue';
@@ -29,6 +30,7 @@ import type {Payload} from './types';
 import {useKeyboard} from './use-keyboard';
 
 const props = defineProps<{payload: Partial<Payload>}>();
+const asked = askedSigns();
 
 initStore(props.payload);
 restore();
@@ -86,6 +88,7 @@ onMounted(() => {
     watchAiLive();
     const shown = row.value;
     if (shown !== null && state.selected < 0 && workOf(shown).detections.length > 0) state.selected = 0;
+    if (shown?.frame_key === asked.frame) selectLinkedBox(asked.box);
   });
   timer = window.setInterval(retryLater, 30000);
   window.addEventListener('online', retryLater);
@@ -98,6 +101,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page">
+    <a v-if="asked.catalog && !isGuest()" class="btn small" :href="asked.catalog">‹ Sign catalog</a>
     <div id="stateBox" class="state-box" :hidden="hasFrames">
       <template v-if="!hasFrames && report.atWork">
         <h2>{{ state.busy?.proposer ?? 'Propose again' }} is starting on this drive</h2>
