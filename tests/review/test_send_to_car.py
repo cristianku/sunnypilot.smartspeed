@@ -705,6 +705,62 @@ def test_a_publication_moves_the_submodule_alone_then_builds(car):
     assert again.returncode == 0 and 'build sunny' not in again.stdout and 'unchanged: speed-limits already has' in again.stdout
 
 
+def test_country_support_is_checked_on_the_pushed_daemon(car):
+    sp = car['sp']
+    path = sp / car_release.CAR_DAEMON
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('classifier_countries = ()\n')
+    git(sp, 'add', str(path))
+    git(sp, 'commit', '-qm', 'support country input')
+    assert not car_release.car_reads_classifier_country(sp)
+    git(sp, 'push', 'origin', 'speed-limits')
+    path.write_text('old image-only daemon\n')
+    assert car_release.car_reads_classifier_country(sp)
+
+
+def test_publish_during_an_already_published_merge_preserves_the_checkout(car, tmp_path):
+    sp = car['sp']
+    other = tmp_path / 'published-merge'
+    git(tmp_path, 'clone', '-q', '-b', 'speed-limits', str(car['sp_origin']), str(other))
+    git(other, 'switch', '-qc', 'upstream')
+    (other / 'NEWS').write_text('upstream\n')
+    git(other, 'add', 'NEWS')
+    git(other, 'commit', '-qm', 'upstream')
+    upstream = git(other, 'rev-parse', 'HEAD')
+    git(other, 'switch', '-q', 'speed-limits')
+    git(other, 'merge', '--no-ff', '-qm', 'publish the merge', upstream)
+    git(other, 'push', 'origin', 'speed-limits')
+    published = git(other, 'rev-parse', 'HEAD')
+    git(sp, 'fetch', 'origin', 'speed-limits')
+    git(sp, 'merge', '--no-ff', '--no-commit', upstream)
+    (sp / 'README.md').write_text('unfinished local work\n')
+    before = [git(sp, 'rev-parse', rev) for rev in ('HEAD', 'MERGE_HEAD')]
+    index, status = git(sp, 'write-tree'), git(sp, 'status', '--porcelain')
+    done = send(car, '--signnet', 's1', FAKE_PUBLISH='new networks')
+    assert done.returncode == 0, done.stdout + done.stderr
+    after = git(car['sp_origin'], 'rev-parse', 'speed-limits')
+    assert git(car['sp_origin'], 'rev-parse', after + '^') == published
+    assert git(car['sp_origin'], 'diff', '--name-only', published, after) == SUBMODULE
+    assert git(car['sp_origin'], 'rev-parse', f'{after}:{SUBMODULE}') == git(car['clone'], 'rev-parse', 'HEAD')
+    assert [git(sp, 'rev-parse', rev) for rev in ('HEAD', 'MERGE_HEAD')] == before
+    assert git(sp, 'write-tree') == index and git(sp, 'status', '--porcelain') == status
+    assert 'build sunny' in done.stdout
+
+
+def test_publish_stops_before_export_if_pending_merge_is_not_upstream(car):
+    sp = car['sp']
+    git(sp, 'switch', '-qc', 'not-published')
+    (sp / 'NEWS').write_text('still local\n')
+    git(sp, 'add', 'NEWS')
+    git(sp, 'commit', '-qm', 'unpublished upstream')
+    git(sp, 'switch', '-q', 'speed-limits')
+    git(sp, 'merge', '--no-ff', '--no-commit', 'not-published')
+    before = git(car['clone'], 'rev-parse', 'HEAD')
+    done = send(car, '--signnet', 's1', FAKE_PUBLISH='new networks')
+    assert done.returncode != 0 and 'resolve and publish the pending' in done.stderr
+    assert 'nnslr send-to-car' not in done.stdout and git(car['clone'], 'rev-parse', 'HEAD') == before
+
+
 def test_a_build_without_push_keeps_it_owed(car):
     done = send(car, '--signnet', 's1', '--rebuild', NO_PUSH='true')
     assert done.returncode == 0, done.stderr
@@ -1177,4 +1233,3 @@ def test_a_brain_trained_to_stand_goes_on_the_car_only_when_the_pushed_brain_py_
     monkeypatch.setenv(car_release.SUNNYPILOT_CLONE_ENV, str(tmp_path / 'none'))
     assert car_release.brain_refused(index) == ''
     assert index.in_use('brain')[0]['stand'] is False and index.in_use('brain')[0]['stand_measure'] is None
-

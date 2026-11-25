@@ -124,9 +124,23 @@ counts="$(git -C "$SUNNYPILOT" rev-list --left-right --count "$BRANCH...refs/rem
 read -r ahead behind <<< "$counts"
 [ "$ahead" -eq 0 ] || [ "$behind" -eq 0 ] || die "$BRANCH of $SUNNYPILOT and origin's have diverged: reconcile them first"
 [ "$ahead" -eq 0 ] || die "$BRANCH of $SUNNYPILOT has $ahead commit(s) not pushed: push or drop them first"
+# If the shared clone still has an upstream merge already incorporated by the published
+# branch, publish the gitlink from the pushed tree, without using that checkout's index.
+published_base="$(git -C "$SUNNYPILOT" rev-parse "refs/remotes/origin/$BRANCH")"
+isolated=0
+if git -C "$SUNNYPILOT" rev-parse -q --verify MERGE_HEAD >/dev/null; then
+  [ -z "$(git -C "$SUNNYPILOT" ls-files -u)" ] && git -C "$SUNNYPILOT" merge-base --is-ancestor MERGE_HEAD "$published_base" \
+    || die "resolve and publish the pending sunnypilot merge before publishing models"
+  git -C "$SUNNYPILOT" diff --quiet "$published_base" -- "${SUBMODULE%/models}" ":(exclude)$SUBMODULE" \
+    || die "the local speed-limits runtime differs from the published branch during a pending merge"
+  [ "$(git -C "$SUNNYPILOT" ls-tree "$published_base" -- "$SUBMODULE" | cut -d' ' -f1)" = 160000 ] \
+    || die "missing models submodule in the published $BRANCH"
+  isolated=1
+fi
 models_before="$(git -C "$MODELS" rev-parse HEAD)"
-output="$(mktemp)"
-trap 'rm -f "$output"' EXIT
+scratch="$(mktemp -d)"
+output="$scratch/export.log"
+trap 'rm -rf "$scratch"' EXIT
 # Steps 1 to 3 (nnslr_tools.car_release). The brain's check along a drive runs PyTorch on a V100 (NNSLR_GPU_INDEX,
 # default 0: about 1 GB of it for some seconds, beside whatever else holds the card), never on the CPU: without a
 # card it stops and says so.
@@ -149,7 +163,9 @@ would_publish=0
 ! grep -q '^dry run: would publish' "$output" || would_publish=1
 
 echo "== 4/5 Move the models of the sunnypilot $BRANCH branch to ${models_commit:0:7}"
-if [ "$behind" -gt 0 ]; then
+if [ "$isolated" -eq 1 ]; then
+  echo "Using published $BRANCH at ${published_base:0:9}; preserving the shared checkout's pending merge"
+elif [ "$behind" -gt 0 ]; then
   if [ "$dry_run" -eq 1 ]; then
     echo "dry run: $BRANCH is $behind commit(s) behind origin, would fast-forward"
   else
@@ -158,7 +174,7 @@ if [ "$behind" -gt 0 ]; then
     echo "$BRANCH fast-forwarded to origin's ($behind commit(s))"
   fi
 fi
-pointer="$(git -C "$SUNNYPILOT" rev-parse "HEAD:$SUBMODULE")"
+pointer="$(git -C "$SUNNYPILOT" rev-parse "$published_base:$SUBMODULE")"
 moved=0
 if [ "$would_publish" -eq 1 ]; then
   echo "dry run: would move $SUBMODULE from ${pointer:0:7} to the new models commit and push $BRANCH"
@@ -168,23 +184,33 @@ elif [ "$dry_run" -eq 1 ]; then
   echo "dry run: would move $SUBMODULE from ${pointer:0:7} to ${models_commit:0:7} and push $BRANCH"
 else
   git -C "$SUNNYPILOT/$SUBMODULE" fetch --quiet origin main
-  git -C "$SUNNYPILOT/$SUBMODULE" checkout --quiet --detach "$models_commit"
+  git -C "$SUNNYPILOT/$SUBMODULE" merge-base --is-ancestor "$models_commit" refs/remotes/origin/main \
+    || die "models commit $models_commit is not on the published main branch"
   # Owed from here: a push that fails after the remote took it must still lead to a build.
   mkdir -p "$(dirname "$PENDING")"
   printf '%s\n' "$models_commit" > "$PENDING"
-  old_head="$(git -C "$SUNNYPILOT" rev-parse HEAD)"
-  # The submodule path alone: whatever else is staged in that clone is somebody else's and stays as it is.
-  git -C "$SUNNYPILOT" commit --quiet -m "speed limits: models ${models_commit:0:7} (Send to the car, SignNet $signnet)" \
-    -- "$SUBMODULE"
-  if ! git -C "$SUNNYPILOT" push --quiet origin "$BRANCH:refs/heads/$BRANCH"; then
-    # Back where it was: the branch, the path's index entry and the submodule (nothing else was touched).
-    git -C "$SUNNYPILOT" update-ref "refs/heads/$BRANCH" "$old_head"
-    git -C "$SUNNYPILOT" reset --quiet "$old_head" -- "$SUBMODULE"
-    git -C "$SUNNYPILOT/$SUBMODULE" checkout --quiet --detach "$pointer"
-    die "the push of $BRANCH failed: nothing changed in $SUNNYPILOT, run it again"
+  message="speed limits: models ${models_commit:0:7} (Send to the car, SignNet $signnet)"
+  if [ "$isolated" -eq 1 ]; then
+    index_git() { GIT_INDEX_FILE="$scratch/index" git -C "$SUNNYPILOT" "$@"; }
+    index_git read-tree "$published_base"
+    index_git update-index --cacheinfo "160000,$models_commit,$SUBMODULE"
+    pushed="$(git -C "$SUNNYPILOT" commit-tree "$(index_git write-tree)" -p "$published_base" -m "$message")"
+    git -C "$SUNNYPILOT" push --quiet origin "$pushed:refs/heads/$BRANCH"
+  else
+    git -C "$SUNNYPILOT/$SUBMODULE" checkout --quiet --detach "$models_commit"
+    old_head="$(git -C "$SUNNYPILOT" rev-parse HEAD)"
+    # The submodule path alone: whatever else is staged in that clone is somebody else's and stays as it is.
+    git -C "$SUNNYPILOT" commit --quiet -m "$message" -- "$SUBMODULE"
+    if ! git -C "$SUNNYPILOT" push --quiet origin "$BRANCH:refs/heads/$BRANCH"; then
+      git -C "$SUNNYPILOT" update-ref "refs/heads/$BRANCH" "$old_head"
+      git -C "$SUNNYPILOT" reset --quiet "$old_head" -- "$SUBMODULE"
+      git -C "$SUNNYPILOT/$SUBMODULE" checkout --quiet --detach "$pointer"
+      die "the push of $BRANCH failed: nothing changed in $SUNNYPILOT, run it again"
+    fi
+    pushed="$(git -C "$SUNNYPILOT" rev-parse HEAD)"
   fi
   git -C "$SUNNYPILOT" fetch --quiet origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
-  echo "moved: $SUBMODULE ${pointer:0:7} -> ${models_commit:0:7}, $BRANCH $(git -C "$SUNNYPILOT" rev-parse --short HEAD) pushed"
+  echo "moved: $SUBMODULE ${pointer:0:7} -> ${models_commit:0:7}, $BRANCH ${pushed:0:9} pushed"
   moved=1
 fi
 

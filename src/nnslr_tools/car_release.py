@@ -206,7 +206,7 @@ def car_reads_classifier_country(clone: Path | None = None) -> bool:
     """Do not publish a two-input classifier to an image-only daemon."""
     clone = Path(clone or os.environ.get(SUNNYPILOT_CLONE_ENV) or SUNNYPILOT_CLONE)
     try:
-        source = _git(clone, 'show', f'origin/{CAR_BRANCH}:{CAR_DAEMON}')
+        source = _git(clone, 'show', f'{CAR_BRANCH}:{CAR_DAEMON}')
     except (OSError, ValueError, subprocess.SubprocessError):
         return False
     return 'classifier_countries' in source
