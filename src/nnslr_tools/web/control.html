@@ -1468,14 +1468,20 @@ html.dr-filling,html.dr-filling body{overflow:hidden}
 /* The drive's name, and on Speed and sign review the traffic light of the selected box beside it (review/LightChips.vue). */
 .dr-title-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 20px;min-width:0}
 .sign-editor.sr-title-lights .kinds.lights .kind-group{flex-wrap:nowrap}
-.sign-editor.sr-title-lights .kinds.lights .field-label{flex:0 0 auto;margin:0 4px 0 0;font-size:13px}
-.sr-title-speeds{display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:6px 6px 7px;margin-left:-6px}
-.sign-editor.sr-title-speeds .plate-controls{display:flex;align-items:center;flex-wrap:wrap;gap:5px 8px;min-width:0}
-.sign-editor.sr-title-speeds .plate-controls .field-label{margin:0;font-size:13px;white-space:nowrap}
-.sign-editor.sr-title-speeds .plate-controls .segmented{display:flex;flex-wrap:wrap;width:auto}
+.sign-editor.sr-title-lights .kinds.lights .field-label{flex:0 0 135px;margin:0 4px 0 0;font-size:13px}
+.sign-editor.sr-title-lights{height:38px;display:flex;align-items:center}
+.sr-signs-on .rt-view-name{width:100%}
+.sr-title-speeds{display:flex;flex-direction:column;gap:6px;padding:6px 6px 7px;margin-left:-6px}
+.sign-editor.sr-title-speeds .plate-controls{display:grid;grid-template-columns:max-content max-content minmax(0,1fr);grid-template-areas:"label choices values";align-items:center;gap:3px 8px;min-height:34px}
+.sign-editor.sr-title-speeds .plate-controls .field-label{grid-area:label;margin:0;font-size:13px;white-space:nowrap}
+.sign-editor.sr-title-speeds .plate-controls .segmented{grid-area:choices;display:flex;flex-wrap:wrap;width:auto}
 .sign-editor.sr-title-speeds .plate-controls .segmented button{min-height:29px;font-size:12px}
-.sign-editor.sr-title-speeds .plate-controls .value-line{margin:0;gap:5px}
-.sign-editor.sr-title-speeds .plate-controls .value-line :is(input,select){width:68px;min-height:30px;padding:3px 6px;font-size:13px}
+.sign-editor.sr-title-speeds .plate-controls .segmented button:disabled{opacity:.45;cursor:default}
+.sign-editor.sr-title-speeds .plate-values{grid-area:values;position:relative;min-width:0}
+.sign-editor.sr-title-speeds .plate-controls .value-line{flex-wrap:nowrap;margin:0;gap:5px;white-space:nowrap}
+.sign-editor.sr-title-speeds .plate-controls .value-line :is(input,select){flex:0 0 62px;width:62px;min-height:30px;padding:3px 6px;font-size:13px}
+.sign-editor.sr-title-speeds #metresError{position:absolute;z-index:2;top:100%;left:0;margin:2px 0;padding:4px 6px;max-width:min(240px,100%);width:max-content;white-space:normal;background:var(--surface);border:1px solid var(--line);border-radius:6px}
+@media (max-width:730px){.sign-editor.sr-title-speeds .plate-controls{grid-template-columns:max-content minmax(0,1fr);grid-template-areas:"label choices" "values values";grid-template-rows:auto 32px}}
 .sign-editor.sr-title-speeds .signs{display:flex;flex-wrap:wrap;gap:9px}
 .sign-editor.sr-title-speeds .sign{width:40px;font-size:15px}
 .sign-editor.sr-title-speeds .sign.wide{font-size:13px}

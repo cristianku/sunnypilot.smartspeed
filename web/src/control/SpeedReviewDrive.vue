@@ -689,6 +689,7 @@ const timeOfEdited = computed(() => {
  * reach on this side, as on the page of Sign review; ← → go on from frame to frame. */
 const alone = computed(() => editing.value && editRow.value !== null && !onFrame.value
   && (!!player.value?.videoGone || videoIndex.value !== null && timeOfEdited.value === null));
+const headerBox = computed(() => editing.value && (onFrame.value || alone.value) ? selectedBox.value : null);
 watch(playerKey, (key) => {
   if (key !== null && key !== editState.currentKey) openFrame(key, false);
 });
@@ -1045,11 +1046,11 @@ function worksIn(from: number, to: number) {
       <b v-else-if="aiSaved" class="ai-badge" id="sr-drive-ai-badge" :title="thousands(aiSaved) + ' frames of this drive reviewed by the AI'"><i
         class="sr-ai-square" aria-hidden="true"></i>AI REVIEW · {{ thousands(aiSaved) }}</b></template>
     <!-- The traffic light of the selected box, on the title row while a frame's signs are edited. -->
-    <template #title-side><div v-if="editing && (onFrame || alone)" class="sign-editor sr-title-lights"><LightChips/></div></template>
-    <template #title-below>
-      <div v-if="editing && editRow && (onFrame || alone)" class="sign-editor sr-title-speeds">
-        <SpeedValueChips :row="editRow" :detection="selectedBox"/>
-        <PlateControls v-if="selectedBox" :key="editRow.frame_key + ':' + editState.selected" :row="editRow" :detection="selectedBox" compact/>
+    <template #title-side><div v-if="showSigns && panel === 'signs'" class="sign-editor sr-title-lights"><LightChips :inactive="!headerBox"/></div></template>
+    <template #title-below="{mph}">
+      <div v-if="showSigns && panel === 'signs'" class="sign-editor sr-title-speeds">
+        <SpeedValueChips :row="editing ? editRow : null" :detection="headerBox" :fallback-mph="mph"/>
+        <PlateControls :key="(editRow?.frame_key ?? '') + ':' + editState.selected" :row="editRow" :detection="headerBox" compact/>
       </div>
     </template>
     <template #hud="{speed, mph}">

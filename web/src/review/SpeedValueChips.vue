@@ -7,11 +7,11 @@ import {countryOf, workOf} from './frames';
 import {report} from './store';
 import type {Detection, FrameRow} from './types';
 
-const props = defineProps<{row: FrameRow; detection: Detection | null}>();
+const props = defineProps<{row: FrameRow | null; detection: Detection | null; fallbackMph?: boolean}>();
 const noValue = computed(() => props.detection !== null && familyHasValue(props.detection.family)
   && props.detection.value_kph == null);
 // In the US the signs are the white SPEED LIMIT rectangles, in mph and every 5; elsewhere the red discs of km/h.
-const usSigns = computed(() => signStyleOf(countryOf(props.row, workOf(props.row))) === 'us');
+const usSigns = computed(() => props.row ? signStyleOf(countryOf(props.row, workOf(props.row))) === 'us' : !!props.fallbackMph);
 const quickValues = computed(() => usSigns.value ? US_VALUES : QUICK_VALUES);
 const disabled = computed(() => props.detection === null || report.readOnly);
 </script>
