@@ -94,9 +94,17 @@ base, chromium, width, embedded = sys.argv[1:]
 with sync_playwright() as p:
     browser = p.chromium.launch(executable_path=chromium, headless=True)
     page = browser.new_page(viewport={'width': int(width), 'height': 900})
-    writes = []
+    page.add_init_script("localStorage.setItem('nnslr-reviewer', 'Catalog test')")
+    writes, fits, saves = [], [], []
+    confirm = False
     def access(route):
         if route.request.method == 'GET':
+            route.continue_()
+        elif route.request.url.endswith('/ai-fit'):
+            fits.append((route.request.url, route.request.post_data_json))
+            route.fulfill(json={'ok': True, 'box': [17, 4, 30, 14], 'message': 'Synthetic proposal'})
+        elif confirm and route.request.url.endswith('/frame/2/1521'):
+            saves.append(route.request.post_data_json)
             route.continue_()
         else:
             writes.append(route.request.url)
@@ -114,11 +122,32 @@ with sync_playwright() as p:
     if os.environ.get('NNSLR_CATALOG_SCREENSHOTS'):
         page.screenshot(path=f'/tmp/opencode/sign-catalog-{width}.png')
     first.click()
+    expect(page.locator('#editorTitle')).to_have_text('Box 2')
+    page.get_by_role('link', name='Sign catalog').click()
+    page.get_by_label('Square fit').check()
+    page.get_by_role('button', name='Fit with AI').first.click()
+    expect(page.locator('#editorTitle')).to_have_text('Box 2')
+    expect(page.get_by_text('AI fit preview. Confirm to save this box.', exact=True).first).to_be_visible()
+    assert len(fits) == 1 and fits[0][0].endswith('/frame/2/1521/ai-fit')
+    assert fits[0][1]['box'] == [19, 5, 28, 14]
+    boxes = page.locator('rect[data-index="1"]').first
+    expect(boxes).to_have_attribute('width', '13')
+    expect(boxes).to_have_attribute('height', '13')
     assert ('/speed-review?' in page.url) == bool(int(embedded))
     expect(page.locator('#editorTitle')).to_have_text('Box 2')
     expect(page.locator('#quickValues [data-value="60"]')).to_have_attribute('aria-pressed', 'true')
-    page.keyboard.press('?')
-    expect(page.locator('#quickValues [data-value="unknown"]')).to_have_attribute('aria-pressed', 'true')
+    if int(embedded):
+        confirm = True
+        with page.expect_response(lambda r: r.request.method == 'POST' and r.url.endswith('/frame/2/1521')) as saved:
+            page.locator('#confirm').click()
+        assert saved.value.status == 200
+        first_box, fitted = saves[0]['detections']
+        assert first_box['bbox_xyxy'] == [1, 2, 15, 20] and first_box['value_kph'] == 50
+        assert fitted['box_source'] == 'ai_fit' and fitted['bbox_xyxy'] == [17, 2.5, 30, 15.5]
+        assert fitted['value_kph'] == 60
+    else:
+        page.keyboard.press('?')
+        expect(page.locator('#quickValues [data-value="unknown"]')).to_have_attribute('aria-pressed', 'true')
     page.get_by_role('link', name='Sign catalog').click()
     assert page.url.startswith(base + '/sign-catalog?')
     expect(page.locator('#sign-catalog-group')).to_have_value('speed:kmh:60')

@@ -231,6 +231,10 @@ def test_fit_with_ai_sends_only_the_crop_around_the_box_and_gives_it_back_tight(
         assert content[0]['image_url']['url'].startswith('data:image/png;base64,')
         assert '42 83 625 833' in content[1]['text']
         assert llm.requests[0]['max_tokens'] == ai_review.FIT_TOKENS
+        status, _, data = server.request('POST', f'/api/route/{ROUTE}/frame/0/0/ai-fit',
+                                          body={'run_id': RUN_ID, 'box': [1, 2, 15, 20], 'include_plate': True})
+        assert status == 200 and json_of(data)['includes_plate']
+        assert 'Include the attached supplementary plate' in llm.requests[-1]['messages'][0]['content'][1]['text']
     # Nothing there: no box, and nothing saved either way.
     with FakeLlm('{"found": false}', require_key=KEY) as llm:
         add_provider(root, llm.base_url)
@@ -247,6 +251,7 @@ def test_the_crop_of_a_fit_is_a_square_around_the_box_inside_the_frame():
     assert ai_review.fit_crop([600, 300, 620, 330], 1344, 760) == [565, 270, 655, 360]
     assert ai_review.fit_crop([0, 0, 40, 30], 1344, 760) == [0, 0, 120, 120]
     assert ai_review.fit_crop([1300, 700, 1344, 760], 1344, 760) == [1164, 580, 1344, 760]
+    assert ai_review.fit_crop([10, 100, 1000, 550], 1344, 760) == [10, 0, 1000, 760]
 
 
 def test_suggestion_refusals(local, fake):

@@ -2488,7 +2488,11 @@ def make_handler(app: ReviewApp):
             if not app.ai_slots.acquire(blocking=False):
                 raise ReviewRejected(429, 'ai_busy', 'The AI is already answering two frames: try again in a moment.')
             try:
-                fitted = ai_review.fit_box(app, route, frame_key, body.get('box'), provider, run_id=run_id)
+                include_plate = body.get('include_plate') is True
+                fitted = ai_review.fit_box(app, route, frame_key, body.get('box'), provider, run_id=run_id,
+                                           include_plate=include_plate)
+                if include_plate:
+                    fitted['includes_plate'] = True
             except ReviewRejected as exc:
                 print(f'AI fit: {terminal_text(route)} {frame_key} failed: {terminal_text(exc.reason)}: '
                       f'{terminal_text(llm_providers._masked(exc.message, provider.get("key")))}', flush=True)

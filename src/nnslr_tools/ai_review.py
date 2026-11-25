@@ -672,25 +672,27 @@ FIT_MIN_SIDE = 64
 FIT_LONG_SIDE = 512
 FIT_TOKENS = 200
 FIT_PROMPT = (
-    'This is a crop of a dashcam frame of a car driving in Switzerland. A reviewer drew a rough box around a traffic '
+    'This is a crop of a dashcam frame. A reviewer drew a rough box around a traffic '
     'sign near the middle: {rough} (x1 y1 x2 y2, relative to this crop from 0 to 1000, x to the right, y down). Give '
-    'the tight box of that sign: the whole sign face (the disc, triangle or plate with its border), not its pole and '
-    'not a panel under it. Answer with this JSON only: {{"found": true, "box": [x1, y1, x2, y2]}} in the same 0-1000 '
+    'the tight box around the whole visible sign, including its outer rim even where it extends beyond the rough box. '
+    '{panel} Exclude its pole. Follow the visible shape: a front-facing disc has a nearly square box; '
+    'keep an angled or rectangular sign tight. Answer with this JSON only: {{"found": true, "box": [x1, y1, x2, y2]}} in the same 0-1000 '
     'coordinates of this crop, or {{"found": false}} when there is no sign there.')
 
 
 def fit_crop(box: list[float], width: int, height: int) -> list[int]:
-    """The square of the frame sent to fit ``box`` (pixels of the frame): the box in its middle, inside the frame."""
+    """The crop sent to fit the box: square unless that would cut the rough box itself at the short frame dimension."""
     side = max(box[2] - box[0], box[3] - box[1], 1.0)
     full = min(max(side * (1 + 2 * FIT_MARGIN), FIT_MIN_SIDE), width, height)
     cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
-    left = min(max(cx - full / 2, 0.0), width - full)
-    top = min(max(cy - full / 2, 0.0), height - full)
-    return [int(left), int(top), int(round(left + full)), int(round(top + full))]
+    w, h = max(full, box[2] - box[0]), max(full, box[3] - box[1])
+    left = min(max(cx - w / 2, 0.0), width - w)
+    top = min(max(cy - h / 2, 0.0), height - h)
+    return [int(left), int(top), min(width, math.ceil(left + w)), min(height, math.ceil(top + h))]
 
 
 def fit_box(service, route: str, frame_key: str, box, provider: dict, *, run_id: str | None = None,
-            timeout: float = ANSWER_TIMEOUT) -> dict:
+            timeout: float = ANSWER_TIMEOUT, include_plate: bool = False) -> dict:
     """The tight box of the sign in the reviewer's rough ``box`` (pixels of the full frame), from the model of
     ``provider`` shown only the crop around it (fit_crop): {box (pixels) or None when it found no sign, seconds,
     message}. Nothing is saved."""
@@ -716,7 +718,9 @@ def fit_box(service, route: str, frame_key: str, box, provider: dict, *, run_id:
     url = 'data:' + image['mime_type'] + ';base64,' + base64.b64encode(image['data']).decode('ascii')
     messages = [{'role': 'user', 'content': [
         {'type': 'image_url', 'image_url': {'url': url}},
-        {'type': 'text', 'text': FIT_PROMPT.format(rough=' '.join(str(value) for value in relative))}]}]
+        {'type': 'text', 'text': FIT_PROMPT.format(rough=' '.join(str(value) for value in relative),
+             panel=('Include the attached supplementary plate beneath it in the SAME box, with both outer borders.'
+                    if include_plate else 'Exclude any supplementary panel under the sign.'))}]}]
     text, seconds = llm_providers.chat(provider, messages, timeout=timeout, max_tokens=FIT_TOKENS)
     data, _repaired = _json_of(text)
     seconds = round(seconds, 1)

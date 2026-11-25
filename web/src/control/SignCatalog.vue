@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import {computed, onBeforeUnmount, ref, shallowRef, watch} from 'vue';
-import {api, messageOf} from '../common/api';
+import {api, messageOf, post} from '../common/api';
+import {openCatalogFit} from '../common/catalog-fit';
 import {plural, thousands} from '../common/format';
 import {catalogAddress} from '../common/sign-link';
-import {describe, familyOf, signKindOf} from '../review/catalog';
-import type {Detection} from '../review/types';
+import {describe, familyOf, holdsPlate, signKindOf} from '../review/catalog';
+import type {Box, Detection} from '../review/types';
 import SectionHead from './SectionHead.vue';
 
 interface Item {
@@ -31,6 +32,9 @@ const page = ref(/^\d{1,6}$/.test(query.get('page') ?? '') ? Math.max(1, Number(
 const current = shallowRef<Catalog | null>(null);
 const loading = ref(false);
 const error = ref('');
+const fitting = shallowRef<Item | null>(null);
+const fitNotice = shallowRef<{item: Item; text: string} | null>(null);
+const square = ref(false);
 let request = 0;
 onBeforeUnmount(() => { ++request; });
 
@@ -58,6 +62,7 @@ async function load(): Promise<void> {
   const mine = ++request;
   const params = new URLSearchParams({group: group.value, page: String(page.value)});
   error.value = '';
+  fitNotice.value = null;
   loading.value = true;
   try {
     const result = await api<Catalog>('/api/speed-review/sign-catalog?' + params);
@@ -98,6 +103,30 @@ function edit(item: Item): string {
   if (current.value && current.value.page > 1) url.searchParams.set('page', String(current.value.page));
   return url.pathname + url.search;
 }
+
+async function fit(item: Item): Promise<void> {
+  const id = item.box.detection_id;
+  if (!id || fitting.value) return;
+  const mine = request;
+  const plate = holdsPlate(item.box);
+  const makeSquare = square.value && !plate;
+  fitting.value = item;
+  fitNotice.value = null;
+  try {
+    const result = await post<{box: Box | null; includes_plate?: boolean; message: string}>(
+      `/api/route/${item.route}/frame/${item.frame}/ai-fit`,
+      {run_id: item.run, box: item.box.bbox_xyxy, include_plate: plate});
+    if (mine !== request) return;
+    if (plate && !result.includes_plate) throw new Error('This server cannot yet fit the sign and its plate together. Open the crop to adjust it.');
+    if (!result.box) { fitNotice.value = {item, text: result.message}; return; }
+    openCatalogFit(edit(item), {route: item.route, run: item.run, frame: item.frame, id,
+      before: item.box.bbox_xyxy, after: result.box, square: makeSquare});
+  } catch (problem) {
+    if (mine === request) fitNotice.value = {item, text: messageOf(problem)};
+  } finally {
+    fitting.value = null;
+  }
+}
 </script>
 
 <template>
@@ -116,6 +145,9 @@ function edit(item: Item): string {
         </optgroup>
       </select>
       <span v-if="group && current?.items.length && !loading">Smallest boxes first</span>
+      <label v-if="group && current?.items.length && !loading" title="Expand the proposed box to a square without cutting off the sign. Signs with a plate keep their shape.">
+        <input v-model="square" type="checkbox"> Square fit
+      </label>
     </div>
     <p v-if="error" class="empty" role="alert">{{ error }} <button type="button" class="link-button" @click="load">Retry</button></p>
     <p v-else-if="loading" class="empty" role="status">Loading signs…</p>
@@ -132,6 +164,11 @@ function edit(item: Item): string {
             </span>
             <span class="sct-chevron" aria-hidden="true">›</span>
           </a>
+          <button type="button" class="btn small sct-fit" :disabled="!!fitting" @click="fit(item)"
+                  title="Fit the whole sign using the surrounding image, then inspect the proposal in the editor.">
+            {{ fitting === item ? 'Fitting…' : 'Fit with AI' }}
+          </button>
+          <small v-if="fitNotice?.item === item" class="sct-notice" role="status">{{ fitNotice.text }}</small>
         </li>
       </ul>
       <nav v-if="current.pages > 1" class="sct-pages" aria-label="Sign catalog pages">
