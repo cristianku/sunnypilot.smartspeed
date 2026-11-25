@@ -8,7 +8,7 @@ from nnslr_tools.drives import drive_of
 from nnslr_tools.review_db import waits_for_a_person
 from nnslr_tools.sign_types import ROAD_USERS
 
-PAGE_SIZE = 120
+PAGE_SIZE = 240
 SPEED_FAMILIES = ('maximum_speed', 'variable_display', 'zone')
 
 
