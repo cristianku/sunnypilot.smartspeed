@@ -1,30 +1,20 @@
 <script setup lang="ts">
 import {computed, onBeforeUnmount, ref, shallowRef, watch} from 'vue';
-import {api, messageOf, post} from '../common/api';
-import {openCatalogFit} from '../common/catalog-fit';
+import {api, messageOf} from '../common/api';
+import CatalogQuickEdit from './CatalogQuickEdit.vue';
+import {refOf, sameRef, type CatalogItem as Item, type SignRef} from './catalog-edit';
 import {plural, thousands} from '../common/format';
 import {catalogAddress} from '../common/sign-link';
-import {describe, familyOf, holdsPlate, signKindOf} from '../review/catalog';
-import type {Box, Detection} from '../review/types';
+import {describe, familyOf, signKindOf} from '../review/catalog';
 import SectionHead from './SectionHead.vue';
 
-interface Item {
-  route: string;
-  run: string;
-  frame: string;
-  box: Detection;
-  width: number;
-  height: number;
-  kind: 'human' | 'ai';
-  title: string | null;
-  editor: string;
-}
 interface Catalog {
   groups: Record<string, number>;
   examples?: Record<string, Pick<Item, 'route' | 'run' | 'frame' | 'box'>>;
   items: Item[];
   page: number;
   pages: number;
+  sequence?: SignRef[];
 }
 
 const query = new URLSearchParams(location.search);
@@ -33,8 +23,10 @@ const page = ref(/^\d{1,6}$/.test(query.get('page') ?? '') ? Math.max(1, Number(
 const current = shallowRef<Catalog | null>(null);
 const loading = ref(false);
 const error = ref('');
-const fitting = shallowRef<Item | null>(null);
-const fitNotice = shallowRef<{item: Item; text: string} | null>(null);
+const target = shallowRef<SignRef | null>(null);
+const autoFit = ref(false);
+let list: SignRef[] = [], position = 0, edited = false, legacyPage = 0;
+const seen = new Set<string>();
 const square = ref(false);
 let request = 0;
 onBeforeUnmount(() => { ++request; });
@@ -64,9 +56,8 @@ const choices = computed(() => {
 
 async function load(): Promise<void> {
   const mine = ++request;
-  const params = new URLSearchParams({group: group.value, page: String(page.value)});
+  const params = new URLSearchParams({group: group.value, page: String(page.value), sequence: '1'});
   error.value = '';
-  fitNotice.value = null;
   loading.value = true;
   try {
     const result = await api<Catalog>('/api/speed-review/sign-catalog?' + params);
@@ -99,37 +90,54 @@ function thumbnail(item: Pick<Item, 'route' | 'run' | 'frame' | 'box'>): string 
   return `/api/route/${item.route}/frame/${item.frame}/classifier-crop?` + args;
 }
 
-function edit(item: Item): string {
-  const url = new URL(item.editor, location.origin);
-  url.searchParams.set('frame', item.frame);
-  url.searchParams.set('box', item.box.detection_id ?? '');
+function edit(item: SignRef): string {
+  const url = new URL('/route/' + item[0] + '/', location.origin);
+  url.searchParams.set('frame', item[2]);
+  url.searchParams.set('box', item[3]);
   url.searchParams.set('catalog', group.value);
   if (current.value && current.value.page > 1) url.searchParams.set('page', String(current.value.page));
   return url.pathname + url.search;
 }
 
-async function fit(item: Item): Promise<void> {
-  const id = item.box.detection_id;
-  if (!id || fitting.value) return;
-  const mine = request;
-  const plate = holdsPlate(item.box);
-  const makeSquare = square.value && !plate;
-  fitting.value = item;
-  fitNotice.value = null;
-  try {
-    const result = await post<{box: Box | null; includes_plate?: boolean; message: string}>(
-      `/api/route/${item.route}/frame/${item.frame}/ai-fit`,
-      {run_id: item.run, box: item.box.bbox_xyxy, include_plate: plate});
-    if (mine !== request) return;
-    if (plate && !result.includes_plate) throw new Error('This server cannot yet fit the sign and its plate together. Open the crop to adjust it.');
-    if (!result.box) { fitNotice.value = {item, text: result.message}; return; }
-    openCatalogFit(edit(item), {route: item.route, run: item.run, frame: item.frame, id,
-      before: item.box.bbox_xyxy, after: result.box, square: makeSquare});
-  } catch (problem) {
-    if (mine === request) fitNotice.value = {item, text: messageOf(problem)};
-  } finally {
-    fitting.value = null;
+function open(item: Item, fit = false): void {
+  if (!current.value) return;
+  list = current.value.sequence ?? current.value.items.map(refOf);
+  position = list.findIndex(r => sameRef(r, refOf(item)));
+  if (position < 0) return;
+  seen.clear(); list.slice(0, position).forEach(r => seen.add(JSON.stringify(r)));
+  legacyPage = current.value.sequence ? 0 : current.value.page;
+  autoFit.value = fit; edited = false; target.value = list[position]!;
+}
+function closeEditor(): void {
+  target.value = null;
+  if (edited) void load();
+}
+let advancing = false;
+async function nextSign(changed: boolean): Promise<void> {
+  if (!target.value || advancing) return;
+  edited ||= changed;
+  seen.add(JSON.stringify(target.value));
+  autoFit.value = false;
+  if (++position < list.length) { target.value = list[position]!; return; }
+  // With an older server, read the tail of the current page again: a relabel may have pulled
+  // the next sign onto this page. New servers give a stable list of IDs at the first request.
+  if (legacyPage) {
+    const previous = target.value;
+    advancing = true;
+    try {
+      do {
+        const query = new URLSearchParams({group: group.value, page: String(legacyPage)});
+        const result = await api<Catalog>('/api/speed-review/sign-catalog?' + query);
+        if (target.value !== previous) return;
+        list = result.items.map(refOf).filter(r => !seen.has(JSON.stringify(r)));
+        if (list.length) { position = 0; target.value = list[0]!; return; }
+        if (legacyPage >= result.pages) break;
+        ++legacyPage;
+      } while (true);
+    } catch (e) { target.value = null; error.value = messageOf(e); return; }
+    finally { advancing = false; }
   }
+  closeEditor();
 }
 </script>
 
@@ -175,19 +183,15 @@ async function fit(item: Item): Promise<void> {
     <template v-else>
       <ul class="sct-grid">
         <li v-for="item in current.items" :key="item.route + '/' + item.frame + '/' + item.box.detection_id">
-          <a class="sct-tile" :href="edit(item)" data-full-navigation :title="describe(item.box)">
+          <button type="button" class="sct-tile" @click="open(item)" :title="'Quick edit: ' + describe(item.box)">
             <img :src="thumbnail(item)" :alt="describe(item.box)" loading="lazy" decoding="async">
             <span class="sct-caption">
               <strong>{{ item.title ?? 'Drive ' + item.route.split('--')[0] }}</strong>
               <small>{{ Math.round(item.width) }} × {{ Math.round(item.height) }} px · {{ item.frame }}<template v-if="item.kind === 'ai'"> · AI</template></small>
             </span>
             <span class="sct-chevron" aria-hidden="true">›</span>
-          </a>
-          <button type="button" class="btn small sct-fit" :disabled="!!fitting" @click="fit(item)"
-                  title="Fit the whole sign using the surrounding image, then inspect the proposal in the editor.">
-            {{ fitting === item ? 'Fitting…' : 'Fit with AI' }}
           </button>
-          <small v-if="fitNotice?.item === item" class="sct-notice" role="status">{{ fitNotice.text }}</small>
+          <button type="button" class="btn small sct-fit" @click="open(item,true)">Fit with AI</button>
         </li>
       </ul>
       <nav v-if="current.pages > 1" class="sct-pages" aria-label="Sign catalog pages">
@@ -197,4 +201,6 @@ async function fit(item: Item): Promise<void> {
       </nav>
     </template>
   </section>
+  <CatalogQuickEdit v-if="target" :target="target" :drive-link="edit(target)" :start-fit="autoFit" :square-fit="square"
+                    @next="nextSign" @close="closeEditor"/>
 </template>

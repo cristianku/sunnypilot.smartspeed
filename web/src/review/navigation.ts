@@ -1,11 +1,6 @@
 // Moving between frames: arrows, the frame after a confirmation, the filters, the frame to start from.
 import {nextTick} from 'vue';
 import {thousands} from '../common/format';
-import {takeCatalogFit} from '../common/catalog-fit';
-import {isGuest} from '../common/guest';
-import {changed, markPlacedByHand} from './edits';
-import {refuseChange} from './busy';
-import {isBox} from './geometry';
 import {readLocal, writeLocal} from './dom';
 import {
   aiConfirmed, confirmedFilter, currentRow, frameStatus, isBetweenFrame, isQualityFilter, matchesFilter, segmentSecond,
@@ -84,38 +79,6 @@ export function selectLinkedBox(id: string | null): void {
     state.selected = index;
     state.selectedByUser = false;
   }
-  const fit = takeCatalogFit();
-  if (!fit || isGuest()) return;
-  const d = workOf(row).detections[index];
-  if (!d || state.server !== 'ready' || report.apiBase !== '/api/route/' + fit.route || report.runId !== fit.run
-      || row.frame_key !== fit.frame || id !== fit.id || JSON.stringify(d.bbox_xyxy) !== JSON.stringify(fit.before)) {
-    state.notice = {key: row.frame_key, text: 'The saved box changed. Go back to the catalog and fit it again.', error: true};
-    return;
-  }
-  if (refuseChange()) return;
-  if (!isBox(fit.after)) return;
-  const [x1, y1, x2, y2] = fit.after;
-  if (x1 < 0 || y1 < 0 || x2 <= x1 || y2 <= y1 || x2 > row.width || y2 > row.height) return;
-  let box = fit.after;
-  if (fit.square) {
-    const side = Math.max(x2 - x1, y2 - y1);
-    if (side > Math.min(row.width, row.height)) {
-      state.notice = {key: row.frame_key, text: 'A square containing the whole sign will not fit in this frame.', error: true};
-      return;
-    }
-    const left = Math.max(0, Math.min(row.width - side, (x1 + x2 - side) / 2));
-    const top = Math.max(0, Math.min(row.height - side, (y1 + y2 - side) / 2));
-    box = [left, top, left + side, top + side];
-  }
-  if (box.every((v, i) => v === d.bbox_xyxy[i])) {
-    state.notice = {key: row.frame_key, text: 'The AI fit matches the saved box.', error: false};
-    return;
-  }
-  d.bbox_xyxy = box;
-  d.box_source = 'ai_fit';
-  markPlacedByHand(d, false);
-  changed(row);
-  state.notice = {key: row.frame_key, text: 'AI fit preview. Confirm to save this box.', error: false};
 }
 
 // The frame to show after a confirmation: the next one still to do under the current filter. Direction -1 (Shift+A

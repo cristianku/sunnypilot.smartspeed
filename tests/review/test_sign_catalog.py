@@ -1,4 +1,4 @@
-"""Global browsing only; all routes and reviews in these tests are synthetic."""
+"""Catalog browsing and single-sign editing; all routes and reviews are synthetic."""
 import os
 import subprocess
 import sys
@@ -41,12 +41,16 @@ def test_catalog_uses_confirmed_boxes_across_routes_and_refreshes_after_edit(tmp
     monkeypatch.setattr(sign_catalog, 'PAGE_SIZE', 2)
     server, rows = setup_catalog(tmp_path)
     try:
-        found = browse(server, group='speed:kmh:60')
+        found = browse(server, group='speed:kmh:60', sequence=1)
         assert found['groups'] == {'speed:kmh:50': 1, 'speed:kmh:60': 3}
         assert found['pages'] == 2
         assert [(item['route'], item['frame']) for item in found['items']] == [(ROUTE, '2/1521'), (ROUTE, '0/0')]
         assert browse(server, group='speed:kmh:60', page=2)['items'][0]['route'] == OTHER_ROUTE
         hit = found['items'][0]
+        assert len(found['sequence']) == 3 and found['sequence'][-1][:3] == [OTHER_ROUTE, hit['run'], '0/0']
+        frame = json_of(server.request('GET', f'/api/route/{ROUTE}/reviews?frame=2%2F1521')[2])
+        assert [r['frame_key'] for r in frame['reviews']] == ['2/1521']
+        assert (frame['frame']['width'], frame['frame']['height']) == (32, 24)
         assert hit['editor'] == f'/route/{ROUTE}/' and hit['box']['value_kph'] == 60
         thumb = f'/api/route/{ROUTE}/frame/{hit["frame"]}/classifier-crop?' + urlencode({
             'box': ','.join(map(str, hit['box']['bbox_xyxy'])),
@@ -101,13 +105,15 @@ with sync_playwright() as p:
     page = browser.new_page(viewport={'width': int(width), 'height': 900})
     page.add_init_script("localStorage.setItem('nnslr-reviewer', 'Catalog test')")
     writes, fits, saves = [], [], []
-    confirm = False
+    confirm = conflict = False
     def access(route):
         if route.request.method == 'GET':
             route.continue_()
         elif route.request.url.endswith('/ai-fit'):
             fits.append((route.request.url, route.request.post_data_json))
             route.fulfill(json={'ok': True, 'box': [17, 4, 30, 14], 'message': 'Synthetic proposal'})
+        elif conflict and route.request.url.endswith('/frame/2/1521'):
+            route.fulfill(status=409, json={'error':'revision_conflict','message':'Another reviewer saved this frame.'})
         elif confirm and route.request.url.endswith('/frame/2/1521'):
             saves.append(route.request.post_data_json)
             route.continue_()
@@ -129,43 +135,64 @@ with sync_playwright() as p:
     page.locator('[data-group="speed:kmh:60"]').click()
     expect(page.locator('.sct-tile')).to_have_count(3)
     first = page.locator('.sct-tile').first
-    assert '2%2F1521' in first.get_attribute('href')
-    assert first.locator('img').evaluate('(img) => img.decode().then(() => img.naturalWidth > 0)')
+    first.scroll_into_view_if_needed()
+    page.wait_for_function("document.querySelector('.sct-tile img')?.naturalWidth > 0")
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
     if os.environ.get('NNSLR_CATALOG_SCREENSHOTS'):
         page.screenshot(path=f'/tmp/opencode/sign-catalog-{width}.png')
     first.click()
-    expect(page.locator('#editorTitle')).to_have_text('Box 2')
-    page.get_by_role('link', name='Sign catalog').click()
+    dialog = page.get_by_role('dialog', name='Quick edit')
+    expect(dialog).to_be_visible()
+    expect(dialog.get_by_label('Speed (km/h)')).to_have_value('60')
+    drive_link = dialog.get_by_role('link', name='Open in drive')
+    assert '2%2F1521' in drive_link.get_attribute('href')
+    with page.expect_popup() as full:
+        drive_link.click()
+    expect(full.value.locator('#editorTitle')).to_have_text('Box 2')
+    full.value.close()
+    assert '/sign-catalog?' in page.url
+    dialog.get_by_role('button', name='Close').click()
     page.get_by_label('Square fit').check()
     page.get_by_role('button', name='Fit with AI').first.click()
-    expect(page.locator('#editorTitle')).to_have_text('Box 2')
-    expect(page.get_by_text('AI fit preview. Confirm to save this box.', exact=True).first).to_be_visible()
+    expect(dialog).to_be_visible()
+    expect(dialog.get_by_text('Synthetic proposal')).to_be_visible()
     assert len(fits) == 1 and fits[0][0].endswith('/frame/2/1521/ai-fit')
     assert fits[0][1]['box'] == [19, 5, 28, 14]
-    boxes = page.locator('rect[data-index="1"]').first
+    boxes = dialog.locator('svg rect')
     expect(boxes).to_have_attribute('width', '13')
     expect(boxes).to_have_attribute('height', '13')
-    assert ('/speed-review?' in page.url) == bool(int(embedded))
-    expect(page.locator('#editorTitle')).to_have_text('Box 2')
-    expect(page.locator('#quickValues [data-value="60"]')).to_have_attribute('aria-pressed', 'true')
+    assert '/sign-catalog?' in page.url
+    expect(dialog.get_by_label('Speed (km/h)')).to_have_value('60')
+    if os.environ.get('NNSLR_CATALOG_SCREENSHOTS'):
+        page.screenshot(path=f'/tmp/opencode/catalog-quick-{width}.png')
     if int(embedded):
         confirm = True
+        dialog.get_by_label('Speed (km/h)').fill('80')
         with page.expect_response(lambda r: r.request.method == 'POST' and r.url.endswith('/frame/2/1521')) as saved:
-            page.locator('#confirm').click()
+            dialog.get_by_role('button', name='Save and next').click()
         assert saved.value.status == 200
         first_box, fitted = saves[0]['detections']
         assert first_box['bbox_xyxy'] == [1, 2, 15, 20] and first_box['value_kph'] == 50
         assert fitted['box_source'] == 'ai_fit' and fitted['bbox_xyxy'] == [17, 2.5, 30, 15.5]
-        assert fitted['value_kph'] == 60
+        assert fitted['value_kph'] == 80
+        expect(dialog.locator('a')).to_have_attribute('href', __import__('re').compile('frame=0%2F0'))
+        expect(dialog.get_by_label('Speed (km/h)')).to_have_value('60')
+        dialog.get_by_role('button',name='Close').click()
     else:
-        page.keyboard.press('?')
-        expect(page.locator('#quickValues [data-value="unknown"]')).to_have_attribute('aria-pressed', 'true')
-    page.get_by_role('link', name='Sign catalog').click()
+        conflict = True
+        dialog.get_by_role('button',name='Save and next').click()
+        expect(dialog.get_by_role('alert')).to_contain_text('Another reviewer')
+        expect(dialog.get_by_role('button',name='Save and next')).to_be_disabled()
+        dialog.get_by_role('button',name='Reload sign').click()
+        expect(dialog.get_by_role('button',name='Next sign')).to_be_enabled()
+        expect(boxes).to_have_attribute('width', '9')
+        dialog.get_by_label('Speed (km/h)').fill('55')
+        dialog.get_by_role('button',name='Close').click()
+        dialog.get_by_role('button',name='Discard and close').click()
     assert page.url.startswith(base + '/sign-catalog?')
     expect(page.locator('#catalog-selection')).to_have_text('60 km/h')
-    expect(page.locator('.sct-tile')).to_have_count(3)
+    expect(page.locator('.sct-tile')).to_have_count(2 if int(embedded) else 3)
     page.get_by_role('button', name='All signs').click()
-    expect(page.locator('.sct-index button[data-group]')).to_have_count(3)
+    expect(page.locator('.sct-index button[data-group]')).to_have_count(4 if int(embedded) else 3)
     assert writes == [], writes
 '''

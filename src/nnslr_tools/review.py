@@ -1733,7 +1733,8 @@ def make_handler(app: ReviewApp):
                 if len(group) > 100 or not re.fullmatch(r'[0-9]{1,6}', page):
                     self._problem(400, 'bad_catalog_filter', 'Invalid sign catalog filter.', True)
                     return
-                self._json(200, app.sign_catalog.view(group, int(page), app.signs_url))
+                self._json(200, app.sign_catalog.view(group, int(page), app.signs_url,
+                                                     sequence=query.get('sequence') == ['1']))
                 return
             from nnslr_tools import drive_review, speed_review
             store = speed_review.store_for(app.root)
@@ -1953,6 +1954,21 @@ def make_handler(app: ReviewApp):
         # [speed-review] - END
 
         def _send_reviews(self, route):
+            key = parse_qs(urlsplit(self.path).query).get('frame', [None])[0]
+            if key is not None:
+                if not re.fullmatch(r'[0-9]{1,9}/[0-9]{1,9}', key):
+                    raise ReviewRejected(400, 'invalid_frame', 'Invalid frame key.')
+                try:
+                    directory, _, by_key = app.report(route)
+                except (PreannotationError, ValueError, OSError):
+                    raise ReviewRejected(404, 'unknown_route', UNKNOWN_DRIVE_MESSAGE) from None
+                row = by_key.get(key)
+                saved = app.store.review(route, directory.name, key)
+                if not row or not saved or not saved['confirmed']:
+                    raise ReviewRejected(409, 'frame_changed', 'This frame is no longer confirmed.')
+                self._json(200, {'run_id': directory.name, 'reviews': [public_review(saved)],
+                                 'frame': {name: row[name] for name in ('frame_key', 'width', 'height', 'preview_path')}})
+                return
             try:
                 directory, run_id, rows, busy, proposer = app.view(route)
             except (PreannotationError, ValueError, OSError):

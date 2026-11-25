@@ -50,7 +50,7 @@ class SignCatalog:
         self._lock = Lock()
         self._routes = {}
 
-    def view(self, group: str, page: int, signs_url) -> dict:
+    def view(self, group: str, page: int, signs_url, *, sequence: bool = False) -> dict:
         # Use the active reports, never prior runs or the append-only history. The per-run stamp changes on edit or
         # withdrawal, so returning from the editor refreshes that drive without reparsing the rest.
         from nnslr_tools.review import list_reports
@@ -91,5 +91,7 @@ class SignCatalog:
                 names[route] = {'title': drive.get('title'), 'editor': signs_url(route)}
             result.append({**item, **names[route]})
         return {'ok': True, 'groups': dict(counts), 'items': result, 'page': page, 'pages': pages,
+                **({'sequence': [[i['route'], i['run'], i['frame'], i['box']['detection_id']] for i in selected]}
+                   if sequence and group else {}),
                 'examples': {key: {name: item[name] for name in ('route', 'frame', 'run', 'box')}
                              for key, item in examples.items()}}
