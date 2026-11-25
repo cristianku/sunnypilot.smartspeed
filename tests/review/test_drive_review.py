@@ -66,7 +66,8 @@ def _schema():
 
 
 @functools.lru_cache(maxsize=None)
-def segment_log(segment: int, gps_unix_ms: int | None = None, skip_frames: tuple = (), passive: tuple = (False,)) -> bytes:
+def segment_log(segment: int, gps_unix_ms: int | None = None, skip_frames: tuple = (), passive: tuple = (False,),
+                gps_coords: tuple[float, float] = (47.0, 8.0)) -> bytes:
     """A SYNTHETIC rlog of one minute of the made-up drive, zstd-compressed as the comma writes it, with one carParams for
     each value of passive."""
     schema = _schema()
@@ -175,7 +176,7 @@ def segment_log(segment: int, gps_unix_ms: int | None = None, skip_frames: tuple
                 fix = event.init('gpsLocationExternal')
                 fix.hasFix = gps_unix_ms is not None
                 if gps_unix_ms is not None:
-                    fix.latitude, fix.longitude = 47.0, 8.0
+                    fix.latitude, fix.longitude = gps_coords
                     fix.unixTimestampMillis = gps_unix_ms + round(s * 1000)
             put(t + 7_000_000, gps)
     for frame in range(1200):
@@ -363,6 +364,23 @@ def test_importing_again_records_nothing_twice(tmp_path, synthetic_schema):
 
 
 # ---------- sync ----------
+
+def test_timeline_chooses_speed_display_unit_from_gps(tmp_path):
+    comma_drive(tmp_path, segments=(0,), gps_unix_ms=1_790_000_000_000, gps_coords=(42.7, -83.3))
+    comma_drive(tmp_path, route=OTHER_ROUTE, segments=(0,), gps_unix_ms=1_790_000_000_000)
+    store = drive_review.store_for(tmp_path)
+    store.scan(ROUTE)
+    store.scan(OTHER_ROUTE)
+    server = RunningServer(tmp_path)
+    try:
+        us, metric = [json_of(server.request('GET', f'/api/drive-review/drives/{route}/timeline')[2])
+                      for route in (ROUTE, OTHER_ROUTE)]
+    finally:
+        server.close()
+    assert us['speed_unit'] == 'mph' and metric['speed_unit'] == 'km/h'
+    for signal in ('map_limit', 'vis_limit', 'v_ego'):
+        assert us['series'][signal] == metric['series'][signal]
+
 
 def test_the_video_is_joined_on_the_monotonic_clock_not_on_file_times(tmp_path):
     make_report(tmp_path)

@@ -619,6 +619,18 @@ def _road_type(value):
     return value if not isinstance(value, str) or value in ROAD_TYPES else ''
 
 
+def _speed_unit(root: Path, gps: list) -> str | None:
+    """Display unit only. Use fixes spread over the drive, never the browser's locale or the map's limit."""
+    from nnslr_tools.gps import frame_country
+    count = min(len(gps), 9)
+    indices = [i * (len(gps) - 1) // max(1, count - 1) for i in range(count)]
+    countries = [frame_country(gps[i][1], gps[i][2], root) for i in indices]
+    known = [code for code in countries if code is not None]
+    if not known:
+        return None
+    return 'mph' if known.count('US') * 2 > len(known) else 'km/h'
+
+
 def timeline(store: DriveReviewStore, route: str, video: dict | None) -> dict:
     """Everything the episode view draws, on seconds from the drive's first video frame (t0): the comma's series,
     its signs and events, the sync of each segment with the video and the episodes."""
@@ -665,7 +677,7 @@ def timeline(store: DriveReviewStore, route: str, video: dict | None) -> dict:
     return {'route': route, 'scan': state, 't0_ns': t0, 'span_s': [0, _seconds(merged['span'][1], t0)],
             'civil_ms': summary.get('civil_ms'), 'meta': merged['meta'], 'holes': merged['holes'],
             'left_out': merged['left_out'], 'segments': segments, 'series': series, 'events': events,
-            'episodes': episodes,
+             'episodes': episodes, 'speed_unit': _speed_unit(store.root, merged['gps']),
             'gps': [[_seconds(t, t0), lat, lon] for t, lat, lon, _unix in merged['gps'][::5]]}
 
 

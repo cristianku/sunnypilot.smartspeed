@@ -167,6 +167,7 @@ export interface Timeline {
   events: [number, 'sign' | 'button' | 'onroad', unknown][];
   episodes: Episode[];
   gps?: [number, number, number][];
+  speed_unit?: 'mph' | 'km/h' | null;
   video: VideoState;
   title: string | null;
   when: string | null;

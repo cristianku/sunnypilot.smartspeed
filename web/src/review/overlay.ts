@@ -127,9 +127,9 @@ export function handlesOf(b: Box, size: number, hit: number, outside: boolean): 
 
 /** The label of box i on the photo and on its zoom: its number, the sign, what its plate says ("500 m", "22-6", "wet")
  * and, when said, the road: our road in capitals after a road icon ("⟋⟍ 2 · 50 · OURS"), another in words. */
-export function boxTitle(d: Detection, i: number): string {
+export function boxTitle(d: Detection, i: number, miles?: boolean): string {
   const road = d.applicability === 'own_road' ? ' · OURS' : d.applicability === 'other_road' ? ' · another' : '';
-  return (i + 1) + ' · ' + shortName(d) + plateTag(d) + road + (d.check_position ? ' · check' : '');
+  return (i + 1) + ' · ' + shortName(d) + plateTag(d, miles) + road + (d.check_position ? ' · check' : '');
 }
 
 /** Where a label starts: at the left of its box, moved left when it would run off the right edge of the photo. */
@@ -143,7 +143,7 @@ export const AI_BOX = '#e040c8';
 /** Boxes, labels, hints and handles of a frame shown at scale k. */
 export function drawStage(detections: readonly Detection[], selected: number, hints: readonly Hint[],
   imageHeight: number, k: number, coarse: boolean, imageWidth = Number.POSITIVE_INFINITY,
-  aiMade: (d: Detection) => boolean = () => false): StageDrawing {
+  aiMade: (d: Detection) => boolean = () => false, miles?: boolean): StageDrawing {
   const fontSize = 14 / k;
   const placed: PlacedLabel[] = [];
   const handleSize = 8 / k;
@@ -169,7 +169,7 @@ export function drawStage(detections: readonly Detection[], selected: number, hi
     const byAi = aiMade(d);
     if (byAi) cls += ' ai';
     const ours = d.applicability === 'own_road';
-    const text = boxTitle(d, i);
+    const text = boxTitle(d, i, miles);
     const wet = d.supplementary_panel === 'wet';
     const icon = ours ? fontSize * (ROAD_ICON + 0.4) : 0;
     const width = labelWidth(text + (wet ? WET_TAG : ''), fontSize) + icon;

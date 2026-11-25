@@ -1,9 +1,9 @@
 <script setup lang="ts">
 // The editor of the selected box: where it comes from and Fit box (its zoom is inside the photo, ZoomInset.vue), the
 // labels used last, road, speed signs, other value, type and kinds of other signs, details.
-import {computed, ref, watch} from 'vue';
-import {BOOLEAN_FIELDS, FAMILIES, PANELS, PLATE_HOURS, ROADS, SELECT_FIELDS,
-  SIGN_KIND_GROUPS, familyHasValue, holdsPlate, isPainted, takesDistance, type BooleanField,
+import {computed} from 'vue';
+import {BOOLEAN_FIELDS, FAMILIES, ROADS, SELECT_FIELDS,
+  SIGN_KIND_GROUPS, familyHasValue, isPainted, type BooleanField,
   type SelectField} from './catalog';
 import {aiBlocker, canFitLocally, fitBox, fitLocal, fitting, localFitting} from './ai';
 import {addedBy, originalOf} from './boxes';
@@ -12,7 +12,7 @@ import {setFamily, setField, setKind, setOnVehicle, setOtherOurs, setValue, squa
 import {workOf} from './frames';
 import {vFill} from './fill';
 import LightChips from './LightChips.vue';
-import PlateDistance from './PlateDistance.vue';
+import PlateControls from './PlateControls.vue';
 import SpeedValueChips from './SpeedValueChips.vue';
 import {report, state} from './store';
 import type {Detection, FrameRow} from './types';
@@ -24,21 +24,8 @@ const usual = FAMILIES.filter((family) => !family.minor);
 const minor = FAMILIES.filter((family) => family.minor);
 const hasValueField = computed(() => props.detection !== null && familyHasValue(props.detection.family));
 const road = computed(() => props.detection?.applicability || 'unresolved');
-const panel = computed(() => props.detection?.supplementary_panel ?? 'unknown');
 const variable = computed(() => props.detection?.family === 'variable_display');
-// From and to of a plate of hours. The box takes them when both are chosen: until then they wait here.
-const asksHours = computed(() => panel.value === 'time' && props.detection?.family === 'maximum_speed');
-const halfHours = ref<[string, string]>(['', '']);
-watch(() => [props.row.frame_key, state.selected], () => { halfHours.value = ['', '']; });
-const hours = computed<[string, string]>(() => {
-  const [from = '', to = ''] = props.detection?.plate_hours?.split('-') ?? [];
-  return props.detection?.plate_hours ? [from, to] : halfHours.value;
-});
-// A plate of distance (#98) goes under any sign, not under a box that is no sign, a road marking or a road user.
-const panels = computed(() => PANELS.filter((item) => item.id !== 'distance'
-  || (props.detection !== null && takesDistance(props.detection))));
-const plateNote = computed(() => props.detection === null || !holdsPlate(props.detection) ? ''
-  : panel.value === 'distance' ? 'The box takes the sign and the plate.' : 'The box takes the disc and the plate.');
+const detailFields = computed(() => report.embedded ? SELECT_FIELDS.filter(key => key !== 'supplementary_panel') : SELECT_FIELDS);
 // O X U and G P R E M on a keyboard (use-keyboard.ts).
 const ROAD_KEYS: Record<string, string> = {own_road: 'O', other_road: 'X', unresolved: 'U'};
 /** The traffic lights, the kind given most, are LightChips.vue; the other kinds under Type. */
@@ -94,15 +81,6 @@ function valueChanged(event: Event): void {
 function selectChanged(key: SelectField, event: Event): void {
   setField(key, (event.target as HTMLSelectElement).value);
 }
-function hoursChanged(side: 0 | 1, event: Event): void {
-  const chosen: [string, string] = [...hours.value];
-  chosen[side] = (event.target as HTMLSelectElement).value;
-  halfHours.value = chosen;
-  const [from, to] = chosen;
-  const value = from !== '' && to !== '' && from !== to ? from + '-' + to : null;
-  if ((props.detection?.plate_hours ?? null) !== value) setField('plate_hours', value);
-  releaseFocus(event);
-}
 function booleanChanged(key: BooleanField, event: Event): void {
   const value = (event.target as HTMLSelectElement).value;
   setField(key, value === 'true' ? true : value === 'false' ? false : null);
@@ -150,29 +128,8 @@ function booleanChanged(key: BooleanField, event: Event): void {
       <button type="button" class="chip quick variable" id="variable" :aria-pressed="variable"
               @click="toggleVariable(); releaseFocus($event)">Variable speed limit<kbd>L</kbd></button>
     </div>
-    <!-- The panel under the sign: with None and Other the box stays on the disc, with Hours and Wet it takes disc and
-         plate (a sign of its own for the classifier), with Distance (any sign: the give way with "15 m") the sign and
-         its plate. A second tap takes the choice back. -->
-    <p class="field-label">Panel below</p>
-    <div class="segmented" id="panels" role="group" aria-label="Panel below the sign">
-      <button v-for="item in panels" :key="item.id" type="button" :aria-pressed="panel === item.id" :data-panel="item.id"
-              @click="setField('supplementary_panel', panel === item.id ? 'unknown' : item.id); releaseFocus($event)">{{ item.label }}</button>
-    </div>
-    <p v-if="plateNote" class="effect-note" id="plateNote">{{ plateNote }}</p>
-    <PlateDistance v-if="!report.embedded && detection" :key="row.frame_key + ':' + state.selected" :detection="detection"/>
-    <!-- The hours written on the plate; empty when they cannot be read, or the plate has days or two ranges. -->
-    <div v-if="asksHours" id="plateHours" class="value-line plate-hours">
-      <label for="hoursFrom">From</label>
-      <select id="hoursFrom" aria-label="Plate valid from" :value="hours[0]" @change="hoursChanged(0, $event)">
-        <option value="">–</option>
-        <option v-for="hour in PLATE_HOURS" :key="hour" :value="String(hour)">{{ hour }}</option>
-      </select>
-      <label for="hoursTo">to</label>
-      <select id="hoursTo" aria-label="Plate valid to" :value="hours[1]" @change="hoursChanged(1, $event)">
-        <option value="">–</option>
-        <option v-for="hour in PLATE_HOURS" :key="hour" :value="String(hour)">{{ hour === 0 ? '0 / 24' : hour }}</option>
-      </select>
-    </div>
+    <!-- The embedded editor puts the whole plate editor next to the speed picker instead. -->
+    <PlateControls v-if="!report.embedded && detection" :key="row.frame_key + ':' + state.selected" :row="row" :detection="detection"/>
     <div id="valueBlock" class="value-line" :hidden="!hasValueField">
       <label for="value">Other value</label>
       <input v-fill="detection?.value_kph === null || detection?.value_kph === undefined ? '' : String(detection.value_kph)"
@@ -221,7 +178,7 @@ function booleanChanged(key: BooleanField, event: Event): void {
     <details>
       <summary>Sign details</summary>
       <div class="grid2">
-        <label v-for="key in SELECT_FIELDS" :key="key">{{ SELECT_LABELS[key] }}
+        <label v-for="key in detailFields" :key="key">{{ SELECT_LABELS[key] }}
           <select :id="key" v-fill="selectValue(key)" @change="selectChanged(key, $event)">
             <option v-for="[value, text] in SELECT_CHOICES[key]" :key="value" :value="value">{{ text }}</option>
           </select>

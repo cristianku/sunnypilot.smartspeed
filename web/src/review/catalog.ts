@@ -211,17 +211,37 @@ export function takesDistance(d: Detection): boolean {
 
 /** The longest distance a plate may say, in metres (nnslr_tools.sign_types.PLATE_DISTANCE_MAX_M). */
 export const PLATE_DISTANCE_MAX_M = 5000;
+const METRES_PER_MILE = 1609.344;
+
+export function milesToMetres(miles: number): number {
+  return Math.round(miles * METRES_PER_MILE);
+}
+
+export function plateDistanceValue(metres: number, miles: boolean): string {
+  if (!miles) return String(metres);
+  // Prefer familiar numbers such as 0.5, without losing the saved metre on round trips.
+  const mi = metres / METRES_PER_MILE;
+  for (let digits = 0; digits < 4; digits++) {
+    const text = mi.toFixed(digits);
+    if (milesToMetres(Number(text)) === metres) return text;
+  }
+  return mi.toFixed(4);
+}
+
+function distanceLabel(d: Detection, miles: boolean): string {
+  return (d.plate_distance_m == null ? '?' : plateDistanceValue(d.plate_distance_m, miles)) + (miles ? ' mi' : ' m');
+}
 
 /** " · in 15 m" after a sign with a plate of distance, " · distance plate" when its metres are not read. */
-function distanceText(d: Detection): string {
+function distanceText(d: Detection, miles: boolean): string {
   if (d.supplementary_panel !== 'distance') return '';
-  return d.plate_distance_m != null ? ' · in ' + d.plate_distance_m + ' m' : ' · distance plate';
+  return d.plate_distance_m != null ? ' · in ' + distanceLabel(d, miles) : ' · distance plate';
 }
 
 /** What the plate under a box says, after its name on the photo: " · 500 m" (" · ? m" when its metres are not read),
  * " · 22-6" (" · hours" when they are not read), " · wet". So the picture shows whether a plate was given (#101). */
-export function plateTag(d: Detection): string {
-  if (d.supplementary_panel === 'distance') return ' · ' + (d.plate_distance_m != null ? d.plate_distance_m : '?') + ' m';
+export function plateTag(d: Detection, miles = false): string {
+  if (d.supplementary_panel === 'distance') return ' · ' + distanceLabel(d, miles);
   if (d.supplementary_panel === 'time') return ' · ' + (d.plate_hours || 'hours');
   if (d.supplementary_panel === 'wet') return ' · wet';
   return '';
@@ -271,18 +291,18 @@ export function hasValue(d: {value_kph?: number | null | undefined}): boolean {
 }
 
 /** The full description in the panel: "Speed limit · 60 km/h", "Variable limit · 80 km/h", "Town entry". */
-export function describe(d: Detection): string {
+export function describe(d: Detection, miles = false): string {
   const kind = d.family === 'other_sign' ? signKindOf(d.sign_type) : null;
   const painted = d.family === 'other_sign' && d.painted === true ? ', painted on the road' : '';
-  if (kind !== null) return kind.label + painted + distanceText(d);
-  if (painted) return 'Other sign' + painted + distanceText(d);
+  if (kind !== null) return kind.label + painted + distanceText(d, miles);
+  if (painted) return 'Other sign' + painted + distanceText(d, miles);
   if (d.family === 'not_a_sign' && d.sign_type === ON_VEHICLE) return 'Not a sign: on a vehicle';
   const family = familyOf(d.family);
   let text = family ? family.brief ?? family.label : String(d.family || 'No type');
   if (hasValue(d)) text += ' · ' + d.value_kph + (d.sign_unit === 'mph' || d.sign_unit === 'km/h' ? ' ' + d.sign_unit : ' (unit not recorded)');
   if (d.plate_hours) text += ' · hours ' + d.plate_hours;
   if (d.supplementary_panel === 'wet') text += ' · when wet';
-  return text + distanceText(d);
+  return text + distanceText(d, miles);
 }
 
 // Short label on the photo: the list in the panel has the full description.

@@ -42,6 +42,7 @@ import {type ControlTab, goTo} from './tabs';
 const props = withDefaults(defineProps<{route: string; readOnly: boolean; tab: ControlTab; backLabel: string; backItem?: string; backDrive?: string | null;
   backHref?: string | null;
   simpleLanes?: boolean; rates?: readonly number[]; startZoom?: Zoom; sharp?: boolean; carKph?: number | null;
+  localSpeedUnits?: boolean; usFrame?: boolean;
   pickMap?: boolean; arrows?: boolean; limits?: boolean; fullScreen?: boolean; sharpBase?: string | null}>(), {simpleLanes: false,
   rates: () => [], sharp: false, startZoom: 'one', pickMap: false, arrows: true, limits: true, fullScreen: false, sharpBase: null});
 const guest = isGuest();
@@ -69,6 +70,10 @@ const MARKS = {
 
 // -- the drive -----------------------------------------------------------------------------------------------------------
 const view = shallowRef<Timeline | null>(null);
+const hudMph = computed(() => props.localSpeedUnits && (view.value?.speed_unit ?? (props.usFrame ? 'mph' : 'km/h')) === 'mph');
+function hudSpeed(kph: number | null | undefined): string | number {
+  return kph == null ? '–' : hudMph.value ? Math.round(kph / 1.609344) : kph;
+}
 const error = ref('');
 let asked = 0;
 async function read(): Promise<void> {
@@ -891,13 +896,13 @@ watch(() => props.route, () => {
             ? 'Making the video of the drive… ' + Math.round((video.progress ?? 0) * 100) + '%'
             : video.state === 'failed' ? 'The video could not be made: ' + (video.reason ?? 'unknown error') + '.'
             : 'No video of this drive on the server.' }}</div>
-          <div v-if="now" class="dr-hud" aria-hidden="true">
+          <div v-if="now" class="dr-hud" :class="{'dr-hud-mph': hudMph}" aria-hidden="true">
             <span v-if="limits" class="dr-box dr-box-vision" :class="{empty: now.visionKph === null}"><svg viewBox="0 0 24 17">
-              <path :d="HUD_ICONS.eye" fill="currentColor" fill-rule="evenodd"/></svg><b>{{ now.visionKph ?? '–' }}</b></span>
-            <span v-if="limits" class="dr-box dr-box-map"><small>MAP</small><b>{{ now.mapKph ?? '–' }}</b></span>
+              <path :d="HUD_ICONS.eye" fill="currentColor" fill-rule="evenodd"/></svg><b>{{ hudSpeed(now.visionKph) }}</b><small v-if="hudMph" class="dr-box-unit">mph</small></span>
+            <span v-if="limits" class="dr-box dr-box-map"><small>MAP</small><b>{{ hudSpeed(now.mapKph) }}</b><small v-if="hudMph" class="dr-box-unit">mph</small></span>
             <span class="dr-box dr-box-car"><svg viewBox="2 4 20 18"><path :d="HUD_ICONS.car" fill="currentColor"/></svg>
-              <b>{{ (ownSpeed ? carKph : now.carKph) ?? '–' }}</b></span>
-            <slot name="hud"></slot>
+              <b>{{ hudSpeed(ownSpeed ? carKph : now.carKph) }}</b><small v-if="hudMph" class="dr-box-unit">mph</small></span>
+            <slot name="hud" :speed="hudSpeed" :mph="hudMph"></slot>
           </div>
           <div class="rt-controls dr-bar" @click.stop>
             <button type="button" class="btn small rt-play dr-bar-icon" :aria-label="playing ? 'Pause' : 'Play'" :title="playing ? 'Pause' : 'Play'"

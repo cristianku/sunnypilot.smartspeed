@@ -12,10 +12,10 @@ import {report, state} from './store';
 import type {Detection, FrameRow} from './types';
 import {useScreenSize} from './use-layout';
 
-const props = defineProps<{row: FrameRow; detection: Detection; index: number}>();
+const props = defineProps<{row: FrameRow; detection: Detection; index: number; miles: boolean}>();
 
 // The box's label as on the photo ("6 · light amber · OURS"), in the zoom's top left corner.
-const title = computed(() => boxTitle(props.detection, props.index)
+const title = computed(() => boxTitle(props.detection, props.index, props.miles)
   + (props.detection.supplementary_panel === 'wet' ? WET_TAG : ''));
 
 // Where the frame is, in the zoom's bottom right corner ("00000191 · 1/49 · 1:49"): a screenshot of the zoom alone

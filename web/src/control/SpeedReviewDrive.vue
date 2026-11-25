@@ -48,13 +48,13 @@ import {toast} from '../composables/toast';
 import {boxColor, describe, plateTag, shortName} from '../review/catalog';
 import {row as editRow, selectedBox} from '../review/current';
 import {frameKeyAt, loadSignEditor, pictureBaseOf, stopSignEditor, videoFrameOf} from '../review/embed';
-import {frameStatus} from '../review/frames';
+import {countryOf, frameStatus, workOf} from '../review/frames';
 import {linkedFrame, openFrame, selectLinkedBox} from '../review/navigation';
 import LightChips from '../review/LightChips.vue';
 import SignEditorPanel from '../review/SignEditorPanel.vue';
 import SignEditorStage from '../review/SignEditorStage.vue';
 import SpeedValueChips from '../review/SpeedValueChips.vue';
-import PlateDistance from '../review/PlateDistance.vue';
+import PlateControls from '../review/PlateControls.vue';
 import {report as editReport, rowOf, state as editState} from '../review/store';
 import {clockOf, type ScanState, secondOf as frameSecondOf, type SyncSegment} from './drive-review';
 import DriveReviewDrive from './DriveReviewDrive.vue';
@@ -664,6 +664,7 @@ async function openEditor(): Promise<void> {
 watch(panel, (value) => { if (value === 'signs') void openEditor(); }, {immediate: true});
 onBeforeUnmount(stopSignEditor);
 const editing = computed(() => showSigns && panel.value === 'signs' && editor.value === 'ready');
+const usFrame = computed(() => editing.value && editRow.value !== null && countryOf(editRow.value, workOf(editRow.value)) === 'US');
 /** The key of Sign review of the frame the player stands on; null while it plays or where Sign review has none. */
 const playerKey = computed(() => {
   if (!editing.value) return null;
@@ -1034,7 +1035,8 @@ function worksIn(from: number, to: number) {
   <DriveReviewDrive ref="player" class="sr-view" :class="{'sr-signs-on': showSigns && panel === 'signs'}" :route="route" :read-only="readOnly" tab="speedreview" :back-href="isGuest() ? null : asked.catalog"
                     :back-label="isGuest() ? 'My reviews' : asked.catalog ? 'Sign catalog' : 'Speed and sign review'" simple-lanes
                     :arrows="!(editing && onFrame)" :sharp-base="editing ? pictureBaseOf(route) + 'video/' : null"
-                    sharp :rates="RATES" start-zoom="ten" :car-kph="driverKph" :pick-map="!readOnly && !speedOff && panel !== 'interventions'" @time="follow"
+                    sharp :rates="RATES" start-zoom="ten" :car-kph="driverKph" local-speed-units :us-frame="usFrame"
+                    :pick-map="!readOnly && !speedOff && panel !== 'interventions'" @time="follow"
                     @pick-map="fromMap" @segments="(value) => { segments = value; }" @index="(value) => { videoIndex = value ?? null; }"
                     @frame="(value) => { presented = value; }" @scan="onScan">
     <template #badge><b v-if="drive?.dashcam" class="dashcam-badge">DASHCAM MODE</b>
@@ -1047,12 +1049,12 @@ function worksIn(from: number, to: number) {
     <template #title-below>
       <div v-if="editing && editRow && (onFrame || alone)" class="sign-editor sr-title-speeds">
         <SpeedValueChips :row="editRow" :detection="selectedBox"/>
-        <PlateDistance v-if="selectedBox" :key="editRow.frame_key + ':' + editState.selected" :detection="selectedBox"/>
+        <PlateControls v-if="selectedBox" :key="editRow.frame_key + ':' + editState.selected" :row="editRow" :detection="selectedBox" compact/>
       </div>
     </template>
-    <template #hud>
+    <template #hud="{speed, mph}">
       <span v-if="!speedOff" class="dr-box sr-box-label" :class="{empty: label === null}" title="ANSWER: your dashboard speed, or your block where there is one; a dash where openpilot or the cruise held the speed"><small>ANSWER</small>
-        <b>{{ label ?? '–' }}</b></span>
+        <b>{{ speed(label) }}</b><small v-if="mph" class="dr-box-unit">mph</small></span>
     </template>
     <template #picture="{shown, zoomed, usePreview, previewSettled}">
       <SignEditorStage v-if="editing && (onFrame && shown || alone) && !zoomed" :class="{'sr-editor-alone': alone}"

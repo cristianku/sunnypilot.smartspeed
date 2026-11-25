@@ -5,6 +5,7 @@ Every drive and label here is SYNTHETIC: made up by these tests. Nothing here is
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -16,6 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from nnslr_tools import pages  # noqa: E402
+from nnslr_tools.gps import positions_path  # noqa: E402
 from nnslr_tools.review_access import guest_rule  # noqa: E402
 from review_helpers import OTHER_ROUTE, ROUTE, RUN_ID, RunningServer, json_of, make_report, page_body, real_previews  # noqa: E402
 
@@ -122,28 +124,57 @@ def test_speed_picker_under_the_drive_title_and_unreadable_key(tmp_path):
         pytest.skip('optional Playwright environment not configured')
     make_report(tmp_path)
     real_previews(tmp_path)
+    make_report(tmp_path, route=OTHER_ROUTE, run_id='20261021T100000Z-0123abce')
+    real_previews(tmp_path, route=OTHER_ROUTE)
+    positions = positions_path(tmp_path, OTHER_ROUTE)
+    positions.parent.mkdir(parents=True)
+    positions.write_text(json.dumps({'frame_key': '0/0', 'segment_index': 0, 'output_index': 0,
+                                      'latitude': 42.7, 'longitude': -83.3, 'country': 'US',
+                                      'country_from': 'gps'}) + '\n')
     server = RunningServer(tmp_path)
     try:
-        result = subprocess.run([python, '-c', PICKER_BROWSER, f'http://127.0.0.1:{server.port}', chromium, ROUTE],
+        result = subprocess.run([python, '-c', PICKER_BROWSER, f'http://127.0.0.1:{server.port}', chromium, ROUTE, OTHER_ROUTE],
                                 capture_output=True, text=True, timeout=60)
+        if result.returncode == 0:
+            status, _, data = server.request('GET', f'/api/route/{OTHER_ROUTE}/reviews')
+            assert status == 200
+            saved = {item['frame_key']: item for item in json_of(data)['reviews']}['0/0']
+            assert saved['country'] == 'US' and saved['detections'][0]['plate_distance_m'] == 805
     finally:
         server.close()
     assert result.returncode == 0, result.stdout + '\n' + result.stderr
 
 
 PICKER_BROWSER = r'''
-import sys
+import os, sys
 from playwright.sync_api import expect, sync_playwright
 
-base, chromium, route = sys.argv[1:]
+base, chromium, route, us_route = sys.argv[1:]
 with sync_playwright() as p:
     browser = p.chromium.launch(executable_path=chromium, headless=True)
     for width in (820, 1180):
         page = browser.new_page(viewport={'width': width, 'height': 900})
         writes = []
+        confirm_us = False
 
         def allow_reads(request):
+            if request.request.url.endswith('/timeline') and '/drive-review/drives/' in request.request.url:
+                route_id = us_route if us_route in request.request.url else route
+                response = request.fetch()
+                payload = response.json()
+                payload.update(t0_ns=1000000000, span_s=[0, 60], speed_unit='mph' if route_id == us_route else 'km/h',
+                               series={'map_valid': [[0, True]], 'map_limit': [[0, 113]], 'vis_limit': [[0, 97]], 'v_ego': [[0, 128]]})
+                request.fulfill(response=response, json=payload)
+                return
+            if request.request.url == base + '/api/speed-review/drives/' + route or request.request.url == base + '/api/speed-review/drives/' + us_route:
+                response = request.fetch()
+                payload = response.json()
+                payload.update(speed=[[1000000000, 128], [61000000000, 128]], span_ns=[1000000000, 61000000000])
+                request.fulfill(response=response, json=payload)
+                return
             if request.request.method == 'GET':
+                request.continue_()
+            elif confirm_us and request.request.url.endswith('/api/route/' + us_route + '/frame/0/0'):
                 request.continue_()
             else:
                 writes.append(request.request.url)
@@ -154,6 +185,8 @@ with sync_playwright() as p:
         title = page.locator('#dr-view-title')
         picker = page.locator('#quickValues')
         expect(picker).to_be_visible()
+        expect(page.locator('.dr-box-map b')).to_have_text('113')
+        expect(page.locator('.dr-box-unit')).to_have_count(0)
         expect(page.locator('.rt-view-name > .sr-title-speeds > #quickValues')).to_have_count(1)
         expect(page.locator('#editor #quickValues')).to_have_count(0)
         assert title.bounding_box()['y'] < picker.bounding_box()['y'] < page.locator('#scene').bounding_box()['y']
@@ -171,9 +204,19 @@ with sync_playwright() as p:
         page.locator('#keysToggle').click()
         expect(page.locator('#keys')).to_contain_text('number not readable')
         page.locator('#keysToggle').click()
-        metres = page.locator('.sr-title-speeds #plateMetres')
+        plates = page.locator('.sr-title-speeds .plate-controls')
+        expect(plates.get_by_text('Panel below', exact=True)).to_be_visible()
+        expect(page.locator('#editor #panels, #editor #supplementary_panel, #editor #plateMetres')).to_have_count(0)
+        expect(plates.get_by_label('Distance (m)', exact=True)).to_have_count(0)
+        plates.get_by_role('button', name='Hours', exact=True).click()
+        plates.get_by_label('Plate valid from').select_option('22')
+        plates.get_by_label('Plate valid to').select_option('6')
+        expect(plates.get_by_label('Plate valid from')).to_have_value('22')
+        expect(page.locator('#editor #plateHours')).to_have_count(0)
+        plates.get_by_role('button', name='Distance', exact=True).click()
+        expect(plates.get_by_label('Plate valid from')).to_have_count(0)
+        metres = plates.get_by_label('Distance (m)', exact=True)
         expect(metres).to_be_visible()
-        expect(page.locator('#editor #plateMetres')).to_have_count(0)
         page.locator('[data-kind="dangerous_bend_left"]').click()
         metres.fill('70')
         metres.press('Enter')
@@ -183,10 +226,43 @@ with sync_playwright() as p:
         page.locator('[data-kind="dangerous_bend_right"]').click()
         expect(metres).to_have_value('70')
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
-        import os
         if os.environ.get('NNSLR_PICKER_SCREENSHOTS'):
             title.scroll_into_view_if_needed()
             page.screenshot(path=f'/tmp/opencode/sign-metres-{width}.png')
+        assert writes == [], writes
+
+        page.add_init_script("localStorage.setItem('nnslr-reviewer', 'Synthetic reviewer')")
+        page.goto(base + '/speed-review?drive=' + us_route + '&side=signs&frame=0/0')
+        expect(picker).to_have_attribute('aria-label', 'Speed signs in mph')
+        expect(page.locator('.dr-box-map b')).to_have_text('70')
+        expect(page.locator('.dr-box-vision b')).to_have_text('60')
+        expect(page.locator('.dr-box-car b')).to_have_text('80')
+        expect(page.locator('.sr-box-label b')).to_have_text('80')
+        expect(page.locator('.dr-box-unit')).to_have_count(4)
+        plates.get_by_role('button', name='Distance', exact=True).click()
+        miles = plates.get_by_label('Distance (mi)', exact=True)
+        expect(miles).to_be_visible()
+        miles.fill('1/0')
+        miles.press('Enter')
+        expect(miles).to_have_attribute('aria-invalid', 'true')
+        miles.fill('½')
+        miles.press('Enter')
+        expect(miles).to_have_value('0.5')
+        expect(miles).to_have_attribute('aria-invalid', 'false')
+        expect(page.locator('#boxList')).to_contain_text('0.5 mi')
+        assert plates.bounding_box()['y'] < page.locator('#scene').bounding_box()['y']
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        if os.environ.get('NNSLR_PICKER_SCREENSHOTS'):
+            title.scroll_into_view_if_needed()
+            page.screenshot(path=f'/tmp/opencode/sign-miles-{width}.png')
+        if width == 1180:
+            confirm_us = True
+            with page.expect_response(lambda r: r.request.method == 'POST' and r.url.endswith('/frame/0/0')) as response:
+                page.locator('#confirm').click()
+            assert response.value.ok
+            assert response.value.request.post_data_json['detections'][0]['plate_distance_m'] == 805
+            page.reload()
+            expect(miles).to_have_value('0.5')
         assert writes == [], writes
         page.close()
 '''

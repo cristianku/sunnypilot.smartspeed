@@ -12,6 +12,8 @@ import {carried, carriedWay} from './carry';
 import {selectedBox} from './current';
 import {coarsePointer} from './dom';
 import {madeByAi} from './boxes';
+import {signStyleOf} from './catalog';
+import {countryOf} from './frames';
 import {drawAi, drawCar, drawStage, sceneScale, WET_TAG} from './overlay';
 import {finishDrag, onPointerDown, onPointerMove, onSceneClick, onTouchStart} from './pointer';
 import PhotoGrip from './PhotoGrip.vue';
@@ -40,10 +42,11 @@ function photoDone(event: Event, failed: boolean): void {
   loaded.value = {href: props.row.preview_path, key: (failed ? 'error:' : '') + props.row.frame_key};
 }
 
+const miles = computed(() => signStyleOf(countryOf(props.row, props.work)) === 'us');
 const drawing = computed(() => drawStage(props.work.detections, state.selected,
   state.showHints ? hintsOf(props.row.frame_key) : [], props.row.height,
   sceneScale(size.value, props.row.width, props.row.height), coarsePointer(), props.row.width,
-  (d) => madeByAi(props.work, d)));
+  (d) => madeByAi(props.work, d), miles.value));
 const aiBoxes = computed(() => {
   const ask = ai.asks[props.row.frame_key];
   if (ask?.phase !== 'ready' || !ask.suggestion) return [];
@@ -149,7 +152,7 @@ const inset = computed(() => {
       <rect id="draft" :visibility="state.draft ? 'visible' : 'hidden'" :x="state.draft?.x" :y="state.draft?.y"
             :width="state.draft?.width" :height="state.draft?.height"></rect>
     </svg>
-    <ZoomInset v-if="inset && selectedBox" :style="inset" :row="row" :detection="selectedBox"
+    <ZoomInset v-if="inset && selectedBox" :style="inset" :row="row" :detection="selectedBox" :miles="miles"
                :index="state.selected"/>
     <div class="stage-hint" id="stageHint" :hidden="!state.drawing"><span>Drag on the image to draw the box · Shift: a square</span></div>
     <!-- After A: the boxes carried, not saved yet; A again saves and goes on (carry.ts). After Shift+A, Shift+A again

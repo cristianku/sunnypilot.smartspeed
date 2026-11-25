@@ -1,8 +1,8 @@
 // The list of the boxes of the frame in the panel ("Signs"), as data for BoxList.vue: what each one is,
 // where it comes from, what the reviewer changed, the boxes that are the same sign twice.
 import type {AiAction} from '../common/ai-types';
-import {CAR_BOX, describe, shortName} from './catalog';
-import {proposalsOf} from './frames';
+import {CAR_BOX, describe, shortName, signStyleOf} from './catalog';
+import {countryOf, proposalsOf} from './frames';
 import {boxArea, overlap} from './geometry';
 import type {Detection, FrameEdit, FrameRow} from './types';
 
@@ -92,10 +92,11 @@ export function duplicatesOf(work: FrameEdit): (number | null)[] {
 
 export function boxItems(row: FrameRow, work: FrameEdit): BoxItem[] {
   const duplicates = duplicatesOf(work);
+  const miles = signStyleOf(countryOf(row, work)) === 'us';
   return work.detections.map((d, i) => ({
     index: i,
     detectionId: String(d.detection_id || ''),
-    what: describe(d),
+    what: describe(d, miles),
     source: sourceOf(row, work, d),
     check: d.check_position === true,
     duplicateOf: duplicates[i] ?? null,
