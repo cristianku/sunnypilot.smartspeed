@@ -9,6 +9,7 @@
 // an address of its own, Back returns to the list.
 import {computed, nextTick, onBeforeUnmount, onMounted, ref} from 'vue';
 import {isGuest} from '../common/guest';
+import {catalogAddress} from '../common/sign-link';
 
 export type ControlTab = 'overview' | 'prepare' | 'dataset' | 'speedreview' | 'signcatalog' | 'signdistance'
   | 'reviewers' | 'train' | 'evaluate' | 'models' | 'drive' | 'publish';
@@ -36,7 +37,7 @@ export const SECTIONS: Record<Section, {title: string; pages: SectionPage[]}> = 
   overview: {title: 'Overview', pages: []},
   data: {title: 'Data', pages: [{key: 'prepare', href: '/prepare', label: 'Drives'},
     {key: 'speedreview', href: '/speed-review', label: 'Speed and sign review'},
-    {key: 'signcatalog', href: '/sign-catalog', label: 'Sign catalog'},
+    {key: 'signcatalog', href: catalogAddress(), label: 'Sign catalog'},
     {key: 'signdistance', href: '/sign-distance', label: 'Sign distance'},
     {key: 'dataset', href: '/dataset', label: 'Training dataset'}, {key: 'reviewers', href: '/reviewers', label: 'Reviewers'}]},
   train: {title: 'Training', pages: []},
@@ -54,7 +55,12 @@ export function tabOf(path: string): ControlTab | null {
 }
 
 /** The tab shown. */
-export const currentTab = ref<ControlTab>(tabOf(location.pathname) ?? 'overview');
+function tabAtAddress(path: string, search: string): ControlTab | null {
+  const params = new URLSearchParams(search);
+  if (path === '/speed-review' && !isGuest() && params.has('catalog') && !params.has('drive')) return 'signcatalog';
+  return tabOf(path);
+}
+export const currentTab = ref<ControlTab>(tabAtAddress(location.pathname, location.search) ?? 'overview');
 
 /** The tabs with a drive of their own at "?drive=<route>". */
 const DRIVE_TABS: readonly ControlTab[] = ['speedreview', 'signdistance', 'drive'];
@@ -88,6 +94,7 @@ export const tabIntervention = computed(() => currentTab.value === 'speedreview'
 
 /** The address of a tab, with its drive and the sign of that drive. */
 function addressOf(tab: ControlTab, drive: string | null, item: string | null, driveScope = false): string {
+  if (tab === 'signcatalog') return catalogAddress();
   const query = new URLSearchParams();
   if (drive !== null) query.set('drive', drive);
   const key = ITEM_KEY[tab];
@@ -150,13 +157,13 @@ export function useTabRouting(): void {
     if (!link || link.origin !== location.origin || link.target || link.hasAttribute('data-full-navigation')) return;
     // An anchor on this tab ("#dataset") scrolls as usual.
     if (link.hash && link.pathname === location.pathname) return;
-    const tab = tabOf(link.pathname);
+    const tab = tabAtAddress(link.pathname, link.search);
     if (tab === null) return;
     event.preventDefault();
     goTo(tab, link.hash, driveOf(link.pathname, link.search), itemOf(link.pathname, link.search), driveScopeOf(link.pathname, link.search));
   }
   function onPop(): void {
-    const tab = tabOf(location.pathname);
+    const tab = tabAtAddress(location.pathname, location.search);
     if (tab === null) return;
     currentTab.value = tab;
     tabDrive.value = driveOf(location.pathname, location.search);

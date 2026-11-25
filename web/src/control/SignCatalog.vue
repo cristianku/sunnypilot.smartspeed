@@ -2,6 +2,7 @@
 import {computed, onBeforeUnmount, ref, shallowRef, watch} from 'vue';
 import {api, messageOf} from '../common/api';
 import {plural, thousands} from '../common/format';
+import {catalogAddress} from '../common/sign-link';
 import {describe, familyOf, signKindOf} from '../review/catalog';
 import type {Detection} from '../review/types';
 import SectionHead from './SectionHead.vue';
@@ -62,12 +63,10 @@ async function load(): Promise<void> {
     const result = await api<Catalog>('/api/speed-review/sign-catalog?' + params);
     if (mine !== request) return;
     current.value = result;
-    const url = new URL(location.href);
-    if (group.value) url.searchParams.set('catalog', group.value);
-    else url.searchParams.delete('catalog');
-    if (result.page > 1) url.searchParams.set('page', String(result.page));
-    else url.searchParams.delete('page');
-    history.replaceState(history.state, '', url.pathname + url.search);
+    const selection = new URLSearchParams();
+    if (group.value) selection.set('catalog', group.value);
+    if (result.page > 1) selection.set('page', String(result.page));
+    history.replaceState(history.state, '', catalogAddress(selection));
   } catch (problem) {
     if (mine === request) error.value = messageOf(problem);
   } finally {

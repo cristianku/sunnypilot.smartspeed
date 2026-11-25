@@ -10,6 +10,16 @@ export interface SignMoment {
   second: number;
 }
 
+/** Page assets update before the server restarts. Older servers serve the catalog through Speed review. */
+export function catalogAddress(params = new URLSearchParams()): string {
+  const paths = document.querySelector<HTMLElement>('nav.tabs [data-section="data"]')?.dataset.paths;
+  if (!paths?.split(' ').includes('/sign-catalog')) {
+    if (!params.has('catalog')) params.set('catalog', '');
+    return '/speed-review?' + params.toString();
+  }
+  return '/sign-catalog' + (params.size ? '?' + params.toString() : '');
+}
+
 /** The Signs side of Speed review of a drive, at a moment and on a frame when given. */
 export function signsHref(route: string, at: SignMoment | null = null, frame: string | null = null): string {
   let address = '/speed-review?drive=' + encodeURIComponent(route) + '&side=signs';
@@ -30,5 +40,5 @@ export function askedSigns(search: string = window.location.search): {
   if (catalog !== null) back.set('catalog', catalog);
   if (catalog !== null && page !== null && /^\d{1,6}$/.test(page)) back.set('page', page);
   return {side: query.get('side') === 'signs', frame: frame !== null && /^[0-9]{1,9}\/[0-9]{1,9}$/.test(frame) ? frame : null,
-    box: query.get('box'), catalog: catalog === null ? null : '/sign-catalog?' + back.toString()};
+    box: query.get('box'), catalog: catalog === null ? null : catalogAddress(back)};
 }
