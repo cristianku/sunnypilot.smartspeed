@@ -1,6 +1,20 @@
 // Boxes in image pixels: comparison, overlap, and where the labels on the photo go.
 import type {Box} from './types';
 
+/** One proportional resize step about the centre, with the box kept inside the frame. */
+export function scaleBox(box: Box, imageWidth: number, imageHeight: number, direction: 1 | -1): Box | null {
+  const [x1, y1, x2, y2] = box;
+  const width = x2 - x1, height = y2 - y1;
+  if (width <= 0 || height <= 0) return null;
+  const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+  const most = Math.min(2 * Math.min(cx, imageWidth - cx) / width, 2 * Math.min(cy, imageHeight - cy) / height);
+  const least = 2 / Math.min(width, height);
+  const step = Math.max(0.06, 1 / Math.max(width, height));
+  const scale = Math.min(Math.max(1 + direction * step, least), most);
+  if (!Number.isFinite(scale) || (scale - 1) * direction < 1e-6) return null;
+  return [cx - width * scale / 2, cy - height * scale / 2, cx + width * scale / 2, cy + height * scale / 2];
+}
+
 export function isBox(value: unknown): value is Box {
   return Array.isArray(value) && value.length === 4 && value.every((item) => typeof item === 'number');
 }

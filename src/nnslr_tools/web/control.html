@@ -1637,6 +1637,8 @@ button.rg-row{cursor:pointer}
 .sct-edit-grid label,.sct-who{display:grid;font-size:13px;gap:2px}
 .sct-edit-grid :is(input,select),.sct-who input{width:100%;min-height:34px;box-sizing:border-box;padding:4px 8px;border:1px solid var(--line-strong);border-radius:8px;background:var(--surface-2);color:var(--fg);font:inherit}
 .sct-zoom{width:100%;height:205px;background:#222;border-radius:9px;touch-action:none;cursor:crosshair}
+.sct-zoom .sct-box{pointer-events:all;cursor:grab}.sct-zoom.sct-grabbing,.sct-zoom.sct-grabbing .sct-box{cursor:grabbing}
+.sct-dialog kbd{font:inherit;font-size:.85em;opacity:.75}
 .sct-edit-grid small{color:var(--muted)}.sct-edit-grid .sct-actions{margin-top:8px}
 .sct-edit-footer{margin-top:16px}.sct-edit-footer a{margin-right:auto;color:var(--accent)}
 .sct-dialog p[role=alert]{color:var(--bad)}@media(max-width:550px){.sct-edit-grid{grid-template-columns:1fr}}

@@ -151,7 +151,49 @@ with sync_playwright() as p:
     expect(full.value.locator('#editorTitle')).to_have_text('Box 2')
     full.value.close()
     assert '/sign-catalog?' in page.url
+    # An unchanged sign advances without a save, even from the dialog's initial focus.
+    dialog.get_by_role('button', name='Close').focus()
+    page.keyboard.press('Enter')
+    expect(dialog.locator('a')).to_have_attribute('href', __import__('re').compile('frame=0%2F0'))
+    rect = dialog.locator('.sct-box')
+    expect(rect).to_have_attribute('width', '14')
+    assert not writes and not saves
+    # q in a field is not a box shortcut; outside the fields Shift+arrows keep the centre and ratio.
+    dialog.get_by_label('Speed (km/h)').focus()
+    page.keyboard.press('q')
+    expect(rect).to_have_attribute('width', '14')
+    zoom = dialog.locator('.sct-zoom')
+    zoom.focus()
+    def coords():
+        return rect.evaluate("(r)=>['x','y','width','height'].map(k=>Number(r.getAttribute(k)))")
+    x,y,w,h = coords()
+    page.keyboard.down('Shift')
+    page.keyboard.down('ArrowDown')
+    page.keyboard.down('ArrowDown')
+    page.keyboard.up('ArrowDown')
+    page.keyboard.up('Shift')
+    xx,yy,ww,hh = coords()
+    assert ww < w and abs(ww/hh - w/h) < 1e-6 and abs(xx+ww/2-x-w/2)<1e-6 and abs(yy+hh/2-y-h/2)<1e-6
+    page.keyboard.press('Shift+ArrowUp')
+    assert coords()[2] > ww
+    page.keyboard.press('q')
+    x,y,w,h = coords()
+    assert abs(w-h)<1e-6
+    # Dragging the interior moves the whole square; dragging past the edge clamps it to the frame.
+    centre = rect.bounding_box()
+    px,py = centre['x']+centre['width']/2, centre['y']+centre['height']/2
+    page.mouse.move(px,py)
+    assert rect.evaluate("r=>getComputedStyle(r).cursor") == 'grab'
+    page.mouse.down()
+    assert zoom.evaluate("s=>getComputedStyle(s).cursor") == 'grabbing'
+    page.mouse.move(px+200,py)
+    page.mouse.up()
+    xx,yy,ww,hh = coords()
+    assert xx>x and abs(xx+ww-32)<1e-6 and abs(yy-y)<1e-6 and abs(ww-w)<1e-6 and abs(hh-h)<1e-6
+    if os.environ.get('NNSLR_CATALOG_SCREENSHOTS'):
+        page.screenshot(path=f'/tmp/opencode/catalog-keys-{width}.png')
     dialog.get_by_role('button', name='Close').click()
+    dialog.get_by_role('button', name='Discard and close').click()
     page.get_by_label('Square fit').check()
     page.get_by_role('button', name='Fit with AI').first.click()
     expect(dialog).to_be_visible()
@@ -169,7 +211,7 @@ with sync_playwright() as p:
         confirm = True
         dialog.get_by_label('Speed (km/h)').fill('80')
         with page.expect_response(lambda r: r.request.method == 'POST' and r.url.endswith('/frame/2/1521')) as saved:
-            dialog.get_by_role('button', name='Save and next').click()
+            page.keyboard.press('Enter')
         assert saved.value.status == 200
         first_box, fitted = saves[0]['detections']
         assert first_box['bbox_xyxy'] == [1, 2, 15, 20] and first_box['value_kph'] == 50
